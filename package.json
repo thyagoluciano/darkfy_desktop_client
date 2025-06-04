@@ -1,0 +1,77 @@
+{
+  "name": "darkfy-client",
+  "version": "1.0.0",
+  "description": "Aplicação Electron para Darkfy",
+  "author": "Thyago Luciano",
+  "license": "ISC",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "npm run build:css && electron .",
+    "build:css": "tailwindcss -i ./src/renderer/css/input.css -o ./src/renderer/css/output.css",
+    "watch:css": "tailwindcss -i ./src/renderer/css/input.css -o ./src/renderer/css/output.css --watch",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "pack": "npm run build:css && electron-builder --dir",
+    "dist": "npm run build:css && electron-builder",
+    "dist:mac": "npm run build:css && electron-builder --mac",
+    "dist:win": "npm run build:css && electron-builder --win --arm64",
+    "dist:linux": "npm run build:css && electron-builder --linux"
+  },
+  "keywords": [
+    "electron",
+    "firebase",
+    "minio"
+  ],
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12",
+    "postcss": "^8.5.4",
+    "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "firebase": "^11.8.1",
+    "minio": "^8.0.5",
+    "youtube-dl-exec": "^3.0.22",
+    "ytdl-core": "^4.11.5"
+  },
+  "build": {
+    "appId": "com.darkfy.client",
+    "productName": "Darkfy Client",
+    "copyright": "Copyright © 2024 ${author}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons",
+      "category": "Utility"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
