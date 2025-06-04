@@ -38,7 +38,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev libxss-dev libgconf-2-4 libgtk-3-0 libnss3 icnsutils graphicsmagick xz-utils
 
       # Build da aplicação
       - name: Build Electron app
