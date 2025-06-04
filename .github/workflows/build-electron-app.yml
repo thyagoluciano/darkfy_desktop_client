@@ -21,13 +21,14 @@ jobs:
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Atualizado para v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4 # Atualizado para v4
         with:
-          node-version: 23.5
+          node-version: 22.16 # Recomendado usar uma versão LTS
           cache: 'npm'
+
 
       - name: Install dependencies
         run: npm ci
@@ -37,14 +38,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev libxss-dev libgconf-2-4 libgtk-3-0 libnss3 libasound2
-
-      # Configurar certificado para macOS
-      # - name: Prepare for app notarization (macOS)
-      #   if: matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
-      #   run: |
-      #     mkdir -p ~/private_keys/
-      #     echo '${{ secrets.APPLE_API_KEY }}' > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev libxss-dev libgconf-2-4 libgtk-3-0 libnss3 libasound2 icnsutils graphicsmagick xz-utils
 
       # Build da aplicação
       - name: Build Electron app
@@ -60,97 +54,93 @@ jobs:
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
+
         run: npm run build
         
       # Preparar artefatos para upload
       - name: Prepare artifacts
         run: |
           mkdir artifacts
-          
-          # Windows
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp dist/*.exe artifacts/ 2>/dev/null || :
             cp dist/*.msi artifacts/ 2>/dev/null || :
             cp dist/*.appx artifacts/ 2>/dev/null || :
-          fi
-          
-          # macOS
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp dist/latest.yml artifacts/ 2>/dev/null || : # Arquivo de auto-update
+            cp dist/*-arm64.exe artifacts/ 2>/dev/null || : # Se construir para ARM64 no Windows
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             cp dist/*.dmg artifacts/ 2>/dev/null || :
             cp dist/*.pkg artifacts/ 2>/dev/null || :
-            cp dist/*.zip artifacts/ 2>/dev/null || :
-          fi
-          
-          # Linux
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            cp dist/*.zip artifacts/ 2>/dev/null || : # Ex: mac-zip
+            cp dist/latest-mac.yml artifacts/ 2>/dev/null || : # Arquivo de auto-update
+            cp dist/*-arm64.dmg artifacts/ 2>/dev/null || : # Para Macs M1/M2
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             cp dist/*.AppImage artifacts/ 2>/dev/null || :
             cp dist/*.deb artifacts/ 2>/dev/null || :
             cp dist/*.rpm artifacts/ 2>/dev/null || :
             cp dist/*.snap artifacts/ 2>/dev/null || :
+            cp dist/latest-linux.yml artifacts/ 2>/dev/null || : # Arquivo de auto-update
+            cp dist/*-arm64.AppImage artifacts/ 2>/dev/null || : # Se construir para ARM64 Linux
           fi
         shell: bash
 
       # Upload de artefatos para GitHub Actions
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # Atualizado para v4
         with:
-          name: ${{ matrix.os }}-artifacts
-          path: artifacts
+          name: ${{ matrix.os }}-build-artifacts # Nome do artefato (ex: windows-latest-build-artifacts)
+          path: artifacts/ # Faz upload do conteúdo da pasta artifacts
 
   # Job para criar release no GitHub
   release:
     name: Create Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: build # Depende da conclusão bem-sucedida de todos os jobs 'build'
+    if: startsWith(github.ref, 'refs/tags/') # Só executa quando uma tag é enviada
     runs-on: ubuntu-latest
     
+    permissions: # Permissões necessárias para o token GITHUB_TOKEN
+      contents: write # Para criar releases e fazer upload de assets
+
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        # Sem 'name' especificado, baixa todos os artefatos do workflow run
+        # Cada artefato será baixado em uma pasta com seu nome (ex: windows-latest-build-artifacts/)
         with:
-          path: artifacts
+          path: all-artifacts # Diretório onde todos os artefatos serão baixados
 
       - name: Display structure of downloaded files
-        run: ls -R artifacts
+        run: ls -R all-artifacts # Para depuração, mostra a estrutura dos arquivos baixados
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 # Atualizado para v2 (ou a mais recente)
         with:
-          draft: true
-          prerelease: false
+          # O nome do release será a tag (ex: v1.0.0)
+          # O corpo do release pode ser preenchido automaticamente com o changelog se você usar ferramentas como conventional-changelog
+          # ou pode ser uma mensagem padrão como abaixo.
+          draft: true # Cria o release como rascunho. Mude para false para publicar diretamente.
+          prerelease: false # Marque como true se for um pré-release
           files: |
-            artifacts/**/*.exe
-            artifacts/**/*.msi
-            artifacts/**/*.appx
-            artifacts/**/*.dmg
-            artifacts/**/*.pkg
-            artifacts/**/*.zip
-            artifacts/**/*.AppImage
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.snap
-          name: Release ${{ github.ref_name }}
+            all-artifacts/**/*.exe
+            all-artifacts/**/*.msi
+            all-artifacts/**/*.appx
+            all-artifacts/**/*.dmg
+            all-artifacts/**/*.pkg
+            all-artifacts/**/*.zip
+            all-artifacts/**/*.AppImage
+            all-artifacts/**/*.deb
+            all-artifacts/**/*.rpm
+            all-artifacts/**/*.snap
+            all-artifacts/**/*.yml # Arquivos de auto-update (latest.yml, latest-mac.yml, etc.)
+          # name: Release ${{ github.ref_name }} # Opcional, o padrão é o nome da tag
           body: |
             # Release ${{ github.ref_name }}
             
-            ## Instaladores
+            Instaladores e arquivos desta versão.
             
-            ### Windows
-            - `.exe` - Instalador Windows
-            - `.msi` - Instalador Windows MSI
-            
-            ### macOS
-            - `.dmg` - Instalador macOS
-            - `.pkg` - Instalador macOS Package
-            
-            ### Linux
-            - `.AppImage` - AppImage (executável portátil)
-            - `.deb` - Pacote Debian/Ubuntu
-            - `.rpm` - Pacote Red Hat/Fedora
-            - `.snap` - Pacote Snap
+            Consulte o [CHANGELOG.md](CHANGELOG.md) para detalhes das mudanças (se você tiver um).
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token fornecido pelo GitHub Actions
