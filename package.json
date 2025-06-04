@@ -11,10 +11,10 @@
     "watch:css": "tailwindcss -i ./src/renderer/css/input.css -o ./src/renderer/css/output.css --watch",
     "test": "echo \"Error: no test specified\" && exit 1",
     "pack": "npm run build:css && electron-builder --dir",
-    "dist": "npm run build:css && electron-builder",
-    "dist:mac": "npm run build:css && electron-builder --mac",
-    "dist:win": "npm run build:css && electron-builder --win --arm64",
-    "dist:linux": "npm run build:css && electron-builder --linux"
+    "dist": "npm run build:css && electron-builder --publish never",
+    "dist:mac": "npm run build:css && electron-builder --mac --publish never",
+    "dist:win": "npm run build:css && electron-builder --win --publish never",
+    "dist:linux": "npm run build:css && electron-builder --linux --publish never"
   },
   "keywords": [
     "electron",
@@ -43,12 +43,23 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    },
+    "asar": true,
+    "compression": "maximum",
     "files": [
       "src/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin"
     ],
-    "asar": false,
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"

@@ -1,0 +1,156 @@
+name: Build Electron App
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main  # ou master, dependendo da sua branch principal
+  pull_request:
+    branches:
+      - main  # ou master
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 23.5
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        
+      # Instalar dependências específicas para Linux
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev libxss-dev libgconf-2-4 libgtk-3-0 libnss3 libasound2
+
+      # Configurar certificado para macOS
+      # - name: Prepare for app notarization (macOS)
+      #   if: matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
+      #   run: |
+      #     mkdir -p ~/private_keys/
+      #     echo '${{ secrets.APPLE_API_KEY }}' > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+
+      # Build da aplicação
+      - name: Build Electron app
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
+          MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
+        run: npm run build
+        
+      # Preparar artefatos para upload
+      - name: Prepare artifacts
+        run: |
+          mkdir artifacts
+          
+          # Windows
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp dist/*.exe artifacts/ 2>/dev/null || :
+            cp dist/*.msi artifacts/ 2>/dev/null || :
+            cp dist/*.appx artifacts/ 2>/dev/null || :
+          fi
+          
+          # macOS
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp dist/*.dmg artifacts/ 2>/dev/null || :
+            cp dist/*.pkg artifacts/ 2>/dev/null || :
+            cp dist/*.zip artifacts/ 2>/dev/null || :
+          fi
+          
+          # Linux
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            cp dist/*.AppImage artifacts/ 2>/dev/null || :
+            cp dist/*.deb artifacts/ 2>/dev/null || :
+            cp dist/*.rpm artifacts/ 2>/dev/null || :
+            cp dist/*.snap artifacts/ 2>/dev/null || :
+          fi
+        shell: bash
+
+      # Upload de artefatos para GitHub Actions
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.os }}-artifacts
+          path: artifacts
+
+  # Job para criar release no GitHub
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v3
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          prerelease: false
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.msi
+            artifacts/**/*.appx
+            artifacts/**/*.dmg
+            artifacts/**/*.pkg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.snap
+          name: Release ${{ github.ref_name }}
+          body: |
+            # Release ${{ github.ref_name }}
+            
+            ## Instaladores
+            
+            ### Windows
+            - `.exe` - Instalador Windows
+            - `.msi` - Instalador Windows MSI
+            
+            ### macOS
+            - `.dmg` - Instalador macOS
+            - `.pkg` - Instalador macOS Package
+            
+            ### Linux
+            - `.AppImage` - AppImage (executável portátil)
+            - `.deb` - Pacote Debian/Ubuntu
+            - `.rpm` - Pacote Red Hat/Fedora
+            - `.snap` - Pacote Snap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
