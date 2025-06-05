@@ -99,8 +99,18 @@
           ]
         }
       ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": null,
+      "entitlementsInherit": null,
+      "identity": null,
       "icon": "build/icon.icns",
       "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "sign": false
+    },
+    "afterSign": null
     },
     "linux": {
       "target": [
