@@ -12,7 +12,7 @@ let yearSpanMain, versionSpanMain;
 let currentUID = null;
 let empresaAtivaId = null;
 let nomeEmpresaAtiva = 'N/A';
-let unsubscribeFirestoreListener = null; // Armazena a função de cancelamento do listener
+let unsubscribeFirestoreListener = null;
 let cleanupVideoProcessingResultListener = null;
 let cleanupMonitoringStatusListener = null;
 
@@ -34,8 +34,6 @@ document.addEventListener('DOMContentLoaded', () => {
     yearSpanMain = document.getElementById('current-year-main');
     versionSpanMain = document.getElementById('app-version-main');
 
-    // Adicionar folha de estilo para animações (se não estiver em um CSS global)
-    // Esta parte pode ser removida se a CSP for ajustada e a classe .animate-fadeIn já estiver no output.css
     const styleSheet = document.createElement("style");
     styleSheet.type = "text/css";
     styleSheet.innerText = `@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }`;
@@ -61,16 +59,14 @@ async function initializeApp() {
             if (versionSpanMain) versionSpanMain.textContent = "N/A";
         }
     } else {
-        if (versionSpanMain) versionSpanMain.textContent = "N/A"; // Evitar undefined na UI
+        if (versionSpanMain) versionSpanMain.textContent = "N/A";
         console.warn("RENDERER (ESM): electronAPI.getAppVersion não disponível no preload.");
     }
 
     if (window.electronAPI && window.electronAPI.getFirebaseConfig) {
         try {
-            // console.log("RENDERER (ESM): Solicitando configuração do Firebase do main process..."); // Verboso
             const firebaseConfigFromMain = await window.electronAPI.getFirebaseConfig();
             if (firebaseConfigFromMain && firebaseConfigFromMain.apiKey) {
-                // console.log('RENDERER (ESM): Configuração do Firebase recebida.'); // Verboso
                 firebaseServiceInstance = new FirebaseService(firebaseConfigFromMain);
                 console.log('RENDERER (ESM): FirebaseService inicializado.');
                 setupAuthListenerAndUI(); 
@@ -104,7 +100,6 @@ function setupAuthListenerAndUI() {
     firebaseServiceInstance.onAuthStateChanged(async (user) => {
       if (user) {
         currentUID = user.uid;
-        // console.log(`RENDERER (ESM): Usuário logado: ${user.email} (UID: ${currentUID})`); // Verboso
         await setupUserSession(currentUID, user.email); 
       } else {
         console.log('RENDERER (ESM): Usuário deslogado.');
@@ -116,20 +111,20 @@ function setupAuthListenerAndUI() {
         
         if (unsubscribeFirestoreListener) {
           console.log('RENDERER (ESM): Cancelando listener do Firestore.');
-          unsubscribeFirestoreListener(); // Chama a função de cleanup retornada pelo onSnapshot
+          unsubscribeFirestoreListener();
           unsubscribeFirestoreListener = null;
         }
         if (cleanupVideoProcessingResultListener) {
-            cleanupVideoProcessingResultListener(); // Chama a função de cleanup do preload
+            cleanupVideoProcessingResultListener();
             cleanupVideoProcessingResultListener = null;
         }
         if (cleanupMonitoringStatusListener) {
-            cleanupMonitoringStatusListener(); // Chama a função de cleanup do preload
+            cleanupMonitoringStatusListener();
             cleanupMonitoringStatusListener = null;
         }
 
         videoProcessingQueue = [];
-        isCurrentlyProcessingVideo = false; // Resetar estado
+        isCurrentlyProcessingVideo = false;
         updateVideoQueueUI(); 
         updateCurrentProcessingUI(null);
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Deslogado. Redirecionando para login...';
@@ -163,14 +158,12 @@ async function setupUserSession(uid, userEmail) {
         return;
     }
 
-    // Configura UI básica do usuário
     if (appHeader) appHeader.classList.remove('hidden');
     if (headerUserEmail) headerUserEmail.textContent = userEmail;
     if (userInfoDebug) userInfoDebug.innerHTML = `UID: ${uid}<br>Email: ${userEmail}`;
     if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Obtendo informações da empresa...';
     if (headerEmpresaNome) headerEmpresaNome.textContent = 'Carregando...';
 
-    // Configura listeners de IPC do preload
     if (window.electronAPI) {
         if (window.electronAPI.onVideoProcessingResult && !cleanupVideoProcessingResultListener) {
             cleanupVideoProcessingResultListener = window.electronAPI.onVideoProcessingResult(handleVideoProcessingResult);
@@ -181,7 +174,7 @@ async function setupUserSession(uid, userEmail) {
     } else {
         console.error("RENDERER (ESM): electronAPI não está disponível para registrar listeners IPC.");
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = "Erro crítico: API de comunicação indisponível.";
-        return; // Não prosseguir sem API
+        return;
     }
     await setupFirestoreMonitoring(uid);
 }
@@ -202,7 +195,7 @@ async function setupFirestoreMonitoring(uid) {
   try {
     const userDocSnap = await firebaseServiceInstance.getUserDocument(uid);
 
-    if (!userDocSnap.exists) { // No SDK compat, é userDocSnap.exists (propriedade)
+    if (!userDocSnap.exists) {
       console.error(`RENDERER_FIRESTORE (ESM): Documento do usuário ${uid} não encontrado.`);
       if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro: Documento do usuário não encontrado.`;
       if (headerEmpresaNome) headerEmpresaNome.textContent = 'Empresa: Inválida';
@@ -219,7 +212,7 @@ async function setupFirestoreMonitoring(uid) {
     }
 
     const empresaDocSnap = await firebaseServiceInstance.getCompanyDocument(empresaAtivaId);
-    if (empresaDocSnap.exists) { // Propriedade no SDK compat
+    if (empresaDocSnap.exists) {
         nomeEmpresaAtiva = empresaDocSnap.data().nome || empresaAtivaId;
     } else {
         nomeEmpresaAtiva = empresaAtivaId; 
@@ -228,18 +221,15 @@ async function setupFirestoreMonitoring(uid) {
     if (headerEmpresaNome) headerEmpresaNome.textContent = `${nomeEmpresaAtiva}`;
     if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Monitorando projetos para ${nomeEmpresaAtiva}.`;
 
-    // O retorno de listenToDownloadingProjects é a função de unsubscribe
     unsubscribeFirestoreListener = firebaseServiceInstance.listenToDownloadingProjects(
         empresaAtivaId,
-        (querySnapshot) => { // Success callback
-            // console.log(`RENDERER_FIRESTORE_SNAPSHOT (ESM): ${querySnapshot.docs.length} projetos 'downloading'.`); // Verboso
+        (querySnapshot) => {
             let newItemsAddedToQueue = false;
             querySnapshot.forEach((docSnapshot) => {
                 const projetoData = docSnapshot.data();
                 const projetoId = docSnapshot.id;
 
                 const isAlreadyQueued = videoProcessingQueue.some(p => p.projetoId === projetoId);
-                // currentVideoProcessingDisplay é global e atualizado por updateCurrentProcessingUI
                 const currentProcessingProjectId = currentVideoProcessingDisplay ? currentVideoProcessingDisplay.dataset.projetoId : null;
                 const isCurrentlyBeingProcessed = currentProcessingProjectId === projetoId;
 
@@ -264,7 +254,7 @@ async function setupFirestoreMonitoring(uid) {
                  if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
             }
         }, 
-        (error) => { // Error callback for the listener
+        (error) => {
             console.error(`RENDERER_FIRESTORE_SNAPSHOT (ESM): Erro no listener:`, error);
             if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro ao monitorar Firestore: ${error.message}`;
         }
@@ -277,30 +267,60 @@ async function setupFirestoreMonitoring(uid) {
   }
 }
 
-function processNextVideoInQueue() {
+async function processNextVideoInQueue() {
     if (isCurrentlyProcessingVideo || videoProcessingQueue.length === 0) {
         if (videoProcessingQueue.length === 0 && !isCurrentlyProcessingVideo && monitoringStatusDisplay) {
             // Apenas atualiza se não houver mensagem mais específica
-            // if (!monitoringStatusDisplay.textContent.startsWith("Projeto")) {
-            //     monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
-            // }
+             if (!monitoringStatusDisplay.textContent.includes("Projeto") && 
+                 !monitoringStatusDisplay.textContent.includes("Erro") &&
+                 !monitoringStatusDisplay.textContent.includes("Falha")) {
+                 monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
+             }
         }
         return;
     }
 
     isCurrentlyProcessingVideo = true;
-    const projeto = videoProcessingQueue.shift(); 
+    const projetoParaProcessar = videoProcessingQueue.shift(); 
 
-    updateCurrentProcessingUI(projeto);
-    updateVideoQueueUI(); // Atualiza a contagem da fila
-    // if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Iniciando processamento: ${projeto.projetoId}...`; // Mensagem do main é melhor
+    updateCurrentProcessingUI(projetoParaProcessar);
+    updateVideoQueueUI();
+    // A mensagem de "Iniciando processamento" virá do main.js via handleMonitoringStatusUpdate
 
     if (window.electronAPI && window.electronAPI.requestVideoProcessing) {
-        window.electronAPI.requestVideoProcessing(projeto);
+        let idToken = null;
+        try {
+            if (firebaseServiceInstance && firebaseServiceInstance.getCurrentUser()) {
+                idToken = await firebaseServiceInstance.getCurrentUser().getIdToken(true);
+            } else {
+                throw new Error("Usuário não logado ou FirebaseService indisponível para obter token.");
+            }
+
+            if (!idToken) {
+                 throw new Error("Não foi possível obter o Firebase ID Token.");
+            }
+
+            const dataToSend = {
+                ...projetoParaProcessar,
+                firebaseIdToken: idToken
+            };
+            window.electronAPI.requestVideoProcessing(dataToSend);
+
+        } catch (tokenError) {
+            console.error("RENDERER (ESM): Erro ao obter Firebase ID Token:", tokenError);
+            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Falha ao autenticar para ${projetoParaProcessar.projetoId}: ${tokenError.message}. Retentando em 5s...`;
+            
+            videoProcessingQueue.unshift(projetoParaProcessar);
+            isCurrentlyProcessingVideo = false;
+            updateCurrentProcessingUI(null);
+            updateVideoQueueUI();
+            setTimeout(processNextVideoInQueue, 5000);
+            return;
+        }
     } else {
         console.error("RENDERER (ESM): electronAPI.requestVideoProcessing não disponível!");
-        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Falha ao iniciar ${projeto.projetoId}: API indisponível.`;
-        videoProcessingQueue.unshift(projeto); // Devolve para a fila
+        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Falha ao iniciar ${projetoParaProcessar.projetoId}: API indisponível.`;
+        videoProcessingQueue.unshift(projetoParaProcessar);
         isCurrentlyProcessingVideo = false;
         updateCurrentProcessingUI(null);
         updateVideoQueueUI();
@@ -308,23 +328,22 @@ function processNextVideoInQueue() {
 }
 
 function handleVideoProcessingResult(result) {
-    // console.log('RENDERER (ESM): Resultado do processamento de vídeo recebido:', result); // Verboso
     if (!firebaseServiceInstance) {
         console.error("RENDERER (ESM) (handleVideoProcessingResult): FirebaseService não instanciado.");
         isCurrentlyProcessingVideo = false;
         updateCurrentProcessingUI(null);
         if (monitoringStatusDisplay && result.projetoId) monitoringStatusDisplay.textContent = `Projeto ${result.projetoId}: Falha crítica - serviço DB indisponível.`;
-        processNextVideoInQueue(); // Tenta o próximo, mas o atual não será atualizado no DB
+        processNextVideoInQueue();
         return;
     }
 
     isCurrentlyProcessingVideo = false;
-    const { empresaId, projetoId, success, error: processError, minioPath } = result;
+    const { empresaId, projetoId, success, error: processError, storagePath } = result;
 
-    updateCurrentProcessingUI(null); // Limpa a UI do item em processamento
+    updateCurrentProcessingUI(null);
 
     const statusUpdate = success ? 
-        { status: "downloaded", minioPath: minioPath, errorMessage: null } : // Passa null para que seja deletado
+        { status: "downloaded", storagePath: storagePath, errorMessage: null } :
         { status: "falha_processamento", errorMessage: processError || 'Erro desconhecido no processamento' };
     
     const logAction = success ? "'downloaded'" : "'falha_processamento'";
@@ -340,67 +359,79 @@ function handleVideoProcessingResult(result) {
         console.error(`RENDERER (ESM): Erro ao atualizar projeto ${projetoId} para ${logAction}:`, dbError);
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Erro ao atualizar status no DB (${friendlyStatusMsg}).`;
     }).finally(() => {
-        processNextVideoInQueue(); // Chama o próximo independentemente do resultado do update no DB
+        processNextVideoInQueue();
     });
 }
 
 function handleMonitoringStatusUpdate(statusMsg) {
     const currentProcessingItemDiv = document.getElementById('current-video-processing');
-    if (!currentProcessingItemDiv) return;
-
+    
+    // Tenta extrair o ID do projeto da mensagem de status
     const projetoIdMatch = statusMsg.match(/\[PROJETO (.*?)\]/);
-    // Se a mensagem não for de um projeto específico, atualiza o status geral se nada estiver processando
-    if (!projetoIdMatch) {
-        if (!isCurrentlyProcessingVideo && monitoringStatusDisplay) {
-            // Evita sobrescrever mensagens de erro ou sucesso de processamento de vídeo
-            if (!monitoringStatusDisplay.textContent.includes("Sucesso!") && !monitoringStatusDisplay.textContent.includes("Falha -")) {
-                 monitoringStatusDisplay.textContent = statusMsg;
+    const projetoIdFromMsg = projetoIdMatch ? projetoIdMatch[1] : null;
+
+    if (isCurrentlyProcessingVideo && currentProcessingItemDiv && currentProcessingItemDiv.dataset.projetoId) {
+        const currentProcessedProjectId = currentProcessingItemDiv.dataset.projetoId;
+        // Se a mensagem for para o projeto atual em processamento, atualiza a barra de progresso dele
+        if (projetoIdFromMsg === currentProcessedProjectId) {
+            const progressBar = currentProcessingItemDiv.querySelector(`#progress-bar-${projetoIdFromMsg}`);
+            const progressText = currentProcessingItemDiv.querySelector(`#progress-text-${projetoIdFromMsg}`);
+
+            if (progressBar && progressText) {
+                const percentMatchDownload = statusMsg.match(/Download: (\d+\.?\d*)%/);
+                const dataMatchDownload = statusMsg.match(/\(([\d.]+)MB(?: \/ ([\d.]+)MB)?\)/); // Torna o total opcional
+                
+                const percentMatchUpload = statusMsg.match(/Upload: (\d+\.?\d*)%/);
+                const dataMatchUpload = statusMsg.match(/\(([\d.]+)MB(?: \/ ([\d.]+)MB)? enviados\)/);
+
+
+                if (percentMatchDownload) {
+                    const percent = parseFloat(percentMatchDownload[1]);
+                    progressBar.style.width = `${percent}%`;
+                    let text = `${percent.toFixed(0)}%`;
+                    if (dataMatchDownload) {
+                        text += dataMatchDownload[2] ? ` (${dataMatchDownload[1]}MB / ${dataMatchDownload[2]}MB)` : ` (${dataMatchDownload[1]}MB baixados)`;
+                    }
+                    progressText.textContent = text;
+                    progressBar.classList.remove('bg-blue-500'); // Cor para upload
+                    progressBar.classList.add('bg-green-500'); // Cor para download
+                } else if (statusMsg.includes("Iniciando download...")) {
+                    progressBar.style.width = `0%`;
+                    progressText.textContent = "Iniciando download...";
+                    progressBar.classList.remove('bg-blue-500');
+                    progressBar.classList.add('bg-green-500');
+                } else if (statusMsg.includes("Download concluído. Solicitando URL de upload...")) {
+                    progressBar.style.width = `100%`; 
+                    progressText.textContent = "Solicitando URL...";
+                    progressBar.classList.remove('bg-blue-500');
+                    progressBar.classList.add('bg-green-500');
+                } else if (statusMsg.includes("Fazendo upload para URL pré-assinada...")) {
+                    progressBar.style.width = `0%`; // Reset para progresso do upload
+                    progressText.textContent = "Iniciando upload...";
+                    progressBar.classList.remove('bg-green-500');
+                    progressBar.classList.add('bg-blue-500'); // Cor diferente para upload
+                } else if (percentMatchUpload) {
+                    const percent = parseFloat(percentMatchUpload[1]);
+                    progressBar.style.width = `${percent}%`;
+                    let text = `${percent.toFixed(0)}%`;
+                     if (dataMatchUpload) {
+                        text += dataMatchUpload[2] ? ` (${dataMatchUpload[1]}MB / ${dataMatchUpload[2]}MB enviados)` : ` (${dataMatchUpload[1]}MB enviados)`;
+                    }
+                    progressText.textContent = text;
+                    progressBar.classList.remove('bg-green-500');
+                    progressBar.classList.add('bg-blue-500');
+                }
             }
+        } else if (monitoringStatusDisplay) {
+            // A mensagem é de um projeto, mas não o que está "em processamento" ou é uma mensagem geral
+            monitoringStatusDisplay.textContent = statusMsg;
         }
-        return;
-    }
-    const projetoIdFromMsg = projetoIdMatch[1];
-    const currentProcessedProjectId = currentProcessingItemDiv.dataset.projetoId;
-
-    if (projetoIdFromMsg === currentProcessedProjectId) { // A mensagem é para o vídeo atual
-        const progressBar = currentProcessingItemDiv.querySelector(`#progress-bar-${projetoIdFromMsg}`);
-        const progressText = currentProcessingItemDiv.querySelector(`#progress-text-${projetoIdFromMsg}`);
-
-        if (progressBar && progressText) {
-            const percentMatch = statusMsg.match(/Download: (\d+\.?\d*)%/);
-            const downloadedMatch = statusMsg.match(/\(([\d.]+)MB \/ ([\d.]+)MB\)/);
-            const downloadedOnlyMatch = statusMsg.match(/\(([\d.]+)MB baixados\)/);
-
-            if (percentMatch && downloadedMatch) {
-                const percent = parseFloat(percentMatch[1]);
-                progressBar.style.width = `${percent}%`;
-                progressText.textContent = `${percent.toFixed(0)}% (${downloadedMatch[1]}MB / ${downloadedMatch[2]}MB)`;
-            } else if (downloadedOnlyMatch) { // Progresso sem total
-                progressText.textContent = `(${downloadedOnlyMatch[1]}MB baixados)`;
-                 progressBar.style.width = `100%`; // Ou um estilo diferente para progresso indeterminado
-                 progressBar.classList.add('bg-blue-500'); // Exemplo: cor diferente
-                 progressBar.classList.remove('bg-green-500');
-            } else if (statusMsg.includes("Iniciando download...")) {
-                 progressBar.style.width = `0%`;
-                 progressText.textContent = "Iniciando download...";
-                 progressBar.classList.add('bg-green-500');
-                 progressBar.classList.remove('bg-blue-500');
-            } else if (statusMsg.includes("Download concluído. Upload para Minio...")) {
-                 progressBar.style.width = `100%`; 
-                 progressText.textContent = "Upload para Minio...";
-                 progressBar.classList.add('bg-green-500');
-                 progressBar.classList.remove('bg-blue-500');
-            }
-        }
-    } else if (isCurrentlyProcessingVideo && monitoringStatusDisplay) {
-        // A mensagem é de um projeto, mas não o que está "em processamento"
-        // Pode ser útil logar isso, mas não necessariamente mudar o status principal da UI
-        // console.log(`RENDERER (ESM): Status recebido para ${projetoIdFromMsg}, mas ${currentProcessedProjectId} está processando.`);
-    } else if (!isCurrentlyProcessingVideo && monitoringStatusDisplay) {
-        // Mensagem de projeto, mas nada processando (pode ser uma mensagem de erro do main não relacionada a um item específico)
+    } else if (monitoringStatusDisplay) {
+        // Nada está processando, então a mensagem é geral
          monitoringStatusDisplay.textContent = statusMsg;
     }
 }
+
 
 function updateVideoQueueUI() {
     if (!videoQueueListDisplay) return;
@@ -433,7 +464,7 @@ function updateCurrentProcessingUI(projeto) {
     if (projeto) {
         currentVideoProcessingDisplay.dataset.projetoId = projeto.projetoId; 
         const itemDiv = document.createElement('div');
-        itemDiv.className = 'w-full p-3 bg-green-50 border border-green-200 rounded-lg shadow-sm animate-fadeIn';
+        itemDiv.className = 'w-full p-3 bg-green-50 border border-green-200 rounded-lg shadow-sm animate-fadeIn'; // A cor de fundo pode mudar com base na fase (download/upload)
         itemDiv.innerHTML = `
             <div class="flex items-center mb-2">
                 <svg class="animate-spin h-5 w-5 text-green-600 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

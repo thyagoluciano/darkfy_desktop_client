@@ -38,7 +38,7 @@
   "keywords": [
     "electron",
     "firebase",
-    "minio"
+    "bucket"
   ],
   "devDependencies": {
     "autoprefixer": "^10.4.21",
@@ -105,12 +105,12 @@
       "entitlementsInherit": null,
       "identity": null,
       "icon": "build/icon.icns",
-      "category": "public.app-category.productivity",
-      "dmg": {
-        "sign": false
-      },
-      "afterSign": null
+      "category": "public.app-category.productivity"
     },
+    "dmg": {
+        "sign": false
+    },
+    "afterSign": null,
     "linux": {
       "target": [
         "AppImage",

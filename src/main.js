@@ -1,140 +1,193 @@
 // src/main.js
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
-import fs from 'fs'; // Para ler o arquivo de config
+import { app, BrowserWindow, ipcMain, Menu, shell, dialog } from 'electron'; // Adicionado dialog
+import fs from 'fs';
+import mime from 'mime-types';
 
 // Importe APENAS os objetos de configuração (eles serão preenchidos)
 import FIREBASE_APP_CFG_OBJ from './config/firebaseConfig.js';
-import MINIO_CFG_OBJ from './config/minioConfig.js';
+import BUCKET_CFG_OBJ from './config/bucketConfig.js';
 
 // Importe os serviços
 import DownloadService from './services/downloadService.js';
-import MinioService from './services/minioService.js';
+import BucketService from './services/bucketService.js';
+import PreSignedUrlService from './services/preSignedUrlService.js';
 
-// Obter __dirname e __filename em ESM
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename); // Em dev: aponta para src. Em prod (asar): aponta para a raiz do asar onde main.js está.
+const __dirname = path.dirname(__filename);
 
 let APP_CONFIG_FROM_JSON;
+let API_CFG_OBJ = {};
+// BUCKET_CFG_OBJ já está declarado acima
 
+console.log('[main.js] SCRIPT INICIADO');
 console.log(`[main.js] INÍCIO DO ARQUIVO. app.isPackaged: ${app.isPackaged}`);
 console.log(`[main.js] __dirname (inicial, onde main.js reside): ${__dirname}`);
 
 try {
     let configPath;
     if (app.isPackaged) {
-        // Quando empacotado, __dirname do main.js (que está em app.asar/src/main.js se "src" foi mantido na estrutura)
-        // O app-config.json foi colocado na raiz do asar por "dist/app-config.json" nos files.
-        // Se main.js está em app.asar/src/main.js, precisamos voltar um nível de 'src'.
-        // Se main.js está em app.asar/main.js, então é path.join(__dirname, 'app-config.json').
-        // Assumindo que a estrutura "src" é mantida dentro do asar para o main.js:
-        // configPath = path.join(__dirname, '..', 'app-config.json');
-        configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
+        configPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'app-config.json');
+        // Alternativamente, se app-config.json está na raiz do asar (após build)
+        // configPath = path.join(path.dirname(app.getAppPath()), 'app-config.json');
+        // Ou se o main.js estiver em app.asar/src e o config em app.asar/dist
+        // configPath = path.join(__dirname, '..', 'dist', 'app-config.json'); // Esta era a suposição anterior
     } else {
-        // Em dev, __dirname é src. O config.json é gerado em ../dist/app-config.json
         configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
     }
 
     console.log(`[main.js] Tentando carregar config de: ${configPath}`);
+    if (!fs.existsSync(configPath)) {
+        console.error(`[main.js] ERRO FATAL: app-config.json NÃO ENCONTRADO em ${configPath}`);
+        dialog.showErrorBox('Erro Crítico de Configuração', `Arquivo de configuração app-config.json não encontrado em ${configPath}. A aplicação não pode iniciar.`);
+        app.quit();
+        throw new Error("app-config.json não encontrado"); // Lança erro para parar a execução se o throw não for pego
+    }
     const configFile = fs.readFileSync(configPath, 'utf-8');
     APP_CONFIG_FROM_JSON = JSON.parse(configFile);
+    console.log('[main.js] app-config.json PARSEADO:', JSON.stringify(APP_CONFIG_FROM_JSON, null, 2));
 
-    // Preencher os objetos de configuração importados
     if (APP_CONFIG_FROM_JSON.firebase) {
         Object.assign(FIREBASE_APP_CFG_OBJ, APP_CONFIG_FROM_JSON.firebase);
     } else {
         console.error('[main.js] Chave "firebase" não encontrada em app-config.json');
     }
 
-    if (APP_CONFIG_FROM_JSON.minio) {
-        Object.assign(MINIO_CFG_OBJ, APP_CONFIG_FROM_JSON.minio);
+    if (APP_CONFIG_FROM_JSON.bucket) {
+        Object.assign(BUCKET_CFG_OBJ, APP_CONFIG_FROM_JSON.bucket);
     } else {
-        console.error('[main.js] Chave "minio" não encontrada em app-config.json');
+        console.warn('[main.js] Chave "bucket" não encontrada em app-config.json.');
+    }
+    if (APP_CONFIG_FROM_JSON.api) {
+        Object.assign(API_CFG_OBJ, APP_CONFIG_FROM_JSON.api);
+    } else {
+        console.error('[main.js] Chave "api" não encontrada em app-config.json');
     }
 
     console.log('[main.js] Configuração carregada de app-config.json.');
-    // console.log('[main.js] FIREBASE_APP_CFG_OBJ após carregar JSON:', JSON.stringify(FIREBASE_APP_CFG_OBJ));
-    // console.log('[main.js] MINIO_CFG_OBJ após carregar JSON:', JSON.stringify(MINIO_CFG_OBJ));
 
 } catch (error) {
-    console.error('[main.js] ERRO FATAL: Não foi possível carregar ou parsear app-config.json!', error);
-    // Deixa os objetos de config vazios ou com padrões, as checagens posteriores devem falhar.
-    Object.assign(FIREBASE_APP_CFG_OBJ, {}); // Garante que seja um objeto para evitar erros de undefined
-    Object.assign(MINIO_CFG_OBJ, {});     // Garante que seja um objeto
+    console.error('[main.js] ERRO FATAL durante o carregamento ou parse do app-config.json!', error);
+    if (!app.isReady()) { // Se app não está pronto, não podemos mostrar dialog ainda
+        app.on('ready', () => {
+            dialog.showErrorBox('Erro Crítico de Configuração', `Falha ao carregar ou processar app-config.json: ${error.message}. A aplicação será encerrada.`);
+            app.quit();
+        });
+    } else if(!BrowserWindow.getAllWindows().length) { // Se app está pronto, mas nenhuma janela existe
+         dialog.showErrorBox('Erro Crítico de Configuração', `Falha ao carregar ou processar app-config.json: ${error.message}. A aplicação será encerrada.`);
+         app.quit();
+    }
+    // Se já houver janelas, a aplicação pode tentar continuar, mas provavelmente quebrará.
+    // No nosso caso, se a config falha, é melhor encerrar.
+    // O throw acima pode já ter encerrado o processo se não for pego no escopo global do módulo.
+    // Para garantir, podemos forçar a saída, mas isso é abrupto.
+    // process.exit(1);
+    Object.assign(FIREBASE_APP_CFG_OBJ, {});
+    Object.assign(BUCKET_CFG_OBJ, {});
+    Object.assign(API_CFG_OBJ, {});
 }
 
-// Renomeia para manter consistência com o código anterior
 const FIREBASE_APP_CONFIG = FIREBASE_APP_CFG_OBJ;
-const MINIO_CFG_FROM_ENV = MINIO_CFG_OBJ; // Pode ser renomeado para MINIO_APP_CONFIG
+const API_APP_CONFIG = API_CFG_OBJ;
 
 console.log('MAIN (ESM): Processo principal iniciado (após tentativa de carregar config).');
+console.log('[main.js] FIREBASE_APP_CONFIG:', JSON.stringify(FIREBASE_APP_CONFIG, null, 2));
+console.log('[main.js] BUCKET_CFG_OBJ (para BucketService):', JSON.stringify(BUCKET_CFG_OBJ, null, 2));
+console.log('[main.js] API_APP_CONFIG:', JSON.stringify(API_APP_CONFIG, null, 2));
 
-// Checagem inicial se as configs foram carregadas
-if (FIREBASE_APP_CONFIG && FIREBASE_APP_CONFIG.apiKey) {
-    console.log('MAIN (ESM): Firebase Config carregada e parece válida.');
+
+if (!FIREBASE_APP_CONFIG || !FIREBASE_APP_CONFIG.apiKey) {
+    console.error('MAIN (ESM): FALHA ao validar Firebase Config.');
 } else {
-    console.error('MAIN (ESM): FALHA ao validar Firebase Config após carregar JSON.');
-    console.log('MAIN (ESM): Conteúdo de FIREBASE_APP_CONFIG:', JSON.stringify(FIREBASE_APP_CONFIG));
+    console.log('MAIN (ESM): Firebase Config OK.');
 }
-if (MINIO_CFG_FROM_ENV && MINIO_CFG_FROM_ENV.endpoint) {
-    console.log('MAIN (ESM): Minio Config carregada e parece válida.');
+
+if (!API_APP_CONFIG || !API_APP_CONFIG.baseUrl) {
+    console.error('MAIN (ESM): FALHA ao validar API Config (baseUrl ausente). Obtenção de URLs pré-assinadas PODE FALHAR.');
 } else {
-    console.error('MAIN (ESM): FALHA ao validar Minio Config após carregar JSON.');
-    console.log('MAIN (ESM): Conteúdo de MINIO_CFG_FROM_ENV:', JSON.stringify(MINIO_CFG_FROM_ENV));
+    console.log('MAIN (ESM): API Config OK.');
+}
+
+if (BUCKET_CFG_OBJ && BUCKET_CFG_OBJ.name) {
+    console.log(`MAIN (ESM): Nome do Bucket (BUCKET_CFG_OBJ.name): ${BUCKET_CFG_OBJ.name}`);
+} else {
+    console.warn('MAIN (ESM): Nome do Bucket (BUCKET_CFG_OBJ.name) não definido em app-config.json. Isso pode ser um problema para a API de URL pré-assinada.');
 }
 
 let mainWindow;
-let minioService;
-
-// Configuração para o MinioService que será passada ao construtor
-const minioServiceConfigForConstructor = {
-    ...MINIO_CFG_FROM_ENV, // Spread do objeto de configuração já preenchido
-    onLog: (message) => console.log(`MAIN (ESM) (MinioService): ${message}`)
-};
+let bucketService;
+let preSignedUrlService;
 
 function initializeServices() {
+    console.log('[main.js] --- initializeServices: INÍCIO ---');
     try {
-        if (!MINIO_CFG_FROM_ENV.endpoint || !MINIO_CFG_FROM_ENV.accessKey || !MINIO_CFG_FROM_ENV.secretKey || !MINIO_CFG_FROM_ENV.bucketName) {
-            console.error("MAIN (ESM) (initializeServices): Configuração essencial do Minio ausente. Uploads desabilitados.");
-            if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-                setTimeout(() => sendToRenderer('monitoring-status-update', 'ERRO FATAL: Falha na configuração do Storage. Uploads desabilitados.'), 1000);
-            }
-            return;
-        }
-        minioService = new MinioService(minioServiceConfigForConstructor);
-        console.log('MAIN (ESM): MinioService inicializado com sucesso.');
-      } catch (error) {
-        console.error("MAIN (ESM): FALHA AO INICIALIZAR MINIOSERVICE!", error);
+        console.log('[main.js] initializeServices: Tentando BucketService...');
+        bucketService = new BucketService(
+            (message) => console.log(`MAIN (ESM) (BucketService): ${message}`)
+        );
+        console.log('MAIN (ESM): BucketService (refatorado) inicializado.');
+    } catch (error) {
+        console.error("MAIN (ESM): FALHA AO INICIALIZAR BUCKETSERVICE!", error);
         if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-            setTimeout(() => sendToRenderer('monitoring-status-update', `ERRO FATAL: Falha ao conectar com o Storage (${error.message}). Uploads desabilitados.`), 1000);
+            setTimeout(() => sendToRenderer('monitoring-status-update', `ERRO FATAL: Falha ao inicializar Serviço de Upload (${error.message}).`), 1000);
         }
-      }
+    }
+
+    try {
+        console.log('[main.js] initializeServices: Tentando PreSignedUrlService...');
+        if (!API_APP_CONFIG.baseUrl) {
+            console.error("MAIN (ESM) (initializeServices): Configuração da API (baseUrl) ausente. Obtenção de URLs pré-assinadas desabilitada.");
+            if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                 setTimeout(() => sendToRenderer('monitoring-status-update', 'ERRO: Falha na configuração da API de Uploads. Uploads podem falhar.'), 1000);
+            }
+        } else {
+            preSignedUrlService = new PreSignedUrlService(
+                API_APP_CONFIG.baseUrl,
+                (message) => console.log(`MAIN (ESM) (PreSignedUrlService): ${message}`)
+            );
+            console.log('MAIN (ESM): PreSignedUrlService inicializado com sucesso.');
+        }
+    } catch (error) {
+        console.error("MAIN (ESM): FALHA AO INICIALIZAR PRESIGNEDURLSERVICE!", error);
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            setTimeout(() => sendToRenderer('monitoring-status-update', `ERRO: Falha ao configurar serviço de URLs Pré-assinadas (${error.message}). Uploads podem falhar.`), 1000);
+        }
+    }
+    console.log('[main.js] --- initializeServices: FIM ---');
 }
 
 function createMainWindow() {
-  console.log('MAIN (ESM): Criando janela principal.');
+  console.log('[main.js] ---- createMainWindow: INÍCIO ----');
 
   let preloadPath;
   let loginHtmlPath;
-  // A estrutura de arquivos dentro do ASAR depende da configuração 'files' do electron-builder.
-  // Se "src/main.js" -> asarRoot/src/main.js, então __dirname = asarRoot/src
-  // Se "dist/preload-bundle.js" -> asarRoot/preload-bundle.js
-  // Se "src/renderer/login.html" -> asarRoot/src/renderer/login.html
 
   if (app.isPackaged) {
-    // Assumindo que main.js está em asarRoot/src/main.js devido a "src/**/*" e "main": "src/main.js"
-    // preloadPath = path.join(__dirname, '..', 'preload-bundle.js'); // Volta de 'src' para a raiz do asar
-    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js');
-    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html'); // Dentro de 'src/renderer' no asar
+    // Se o main.js está em app.asar/src/main.js e os bundles/htmls estão em app.asar/dist/ e app.asar/src/renderer
+    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js'); //  app.asar/dist/preload-bundle.js
+    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html'); // app.asar/src/renderer/login.html
   } else {
     // Em desenvolvimento: __dirname é a pasta 'src'
-    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js');
-    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');
+    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js'); // projeto/dist/preload-bundle.js
+    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');    // projeto/src/renderer/login.html
   }
 
-  console.log(`[main.js] Usando preload path para BrowserWindow: ${preloadPath}`);
-  console.log(`[main.js] Carregando login HTML de: ${loginHtmlPath}`);
+  console.log(`[main.js] createMainWindow: Usando preload path para BrowserWindow: ${preloadPath}`);
+  console.log(`[main.js] createMainWindow: Caminho para login HTML: ${loginHtmlPath}`);
+
+  if (!fs.existsSync(preloadPath)) {
+      console.error(`[main.js] createMainWindow: ERRO - Arquivo de preload NÃO ENCONTRADO em: ${preloadPath}`);
+      dialog.showErrorBox('Erro Crítico de Aplicação', `Arquivo de preload não encontrado. A aplicação não pode iniciar.`);
+      app.quit();
+      return;
+  }
+  if (!fs.existsSync(loginHtmlPath)) {
+      console.error(`[main.js] createMainWindow: ERRO - Arquivo login.html NÃO ENCONTRADO em: ${loginHtmlPath}`);
+      dialog.showErrorBox('Erro Crítico de Aplicação', `Arquivo de interface principal (login.html) não encontrado. A aplicação não pode iniciar.`);
+      app.quit();
+      return;
+  }
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -146,46 +199,70 @@ function createMainWindow() {
       spellcheck: false,
     },
     show: false,
-    // O ícone do aplicativo é definido pela configuração do electron-builder no package.json.
-    // Não é necessário definir 'icon' aqui para a janela principal, a menos que queira um ícone de janela diferente.
+  });
+  console.log('[main.js] createMainWindow: BrowserWindow instanciada.');
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[main.js] createMainWindow: WebContents 'did-fail-load': URL ${validatedURL} falhou ao carregar. Código: ${errorCode}, Descrição: ${errorDescription}`);
+    dialog.showErrorBox('Erro de Carregamento', `Falha ao carregar a página: ${validatedURL}\n${errorDescription}`);
   });
 
-  mainWindow.loadFile(loginHtmlPath);
+  mainWindow.webContents.on('crashed', (event, killed) => {
+    console.error(`[main.js] createMainWindow: WebContents 'crashed'. Foi morta? ${killed}`);
+    dialog.showErrorBox('Erro Crítico', 'O processo da interface gráfica travou. A aplicação será encerrada.');
+    app.quit();
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.warn('[main.js] createMainWindow: Janela principal "unresponsive".');
+    dialog.showErrorBox('Aplicação Não Respondendo', 'A janela principal parou de responder.');
+  });
+
+  console.log(`[main.js] createMainWindow: Tentando carregar ${loginHtmlPath}`);
+  mainWindow.loadFile(loginHtmlPath)
+    .then(() => {
+      console.log(`[main.js] createMainWindow: SUCESSO ao carregar ${loginHtmlPath}`);
+    })
+    .catch(err => {
+      console.error(`[main.js] createMainWindow: FALHA AO CARREGAR ${loginHtmlPath} usando mainWindow.loadFile:`, err);
+      dialog.showErrorBox('Erro Crítico', `Não foi possível carregar a interface do usuário (login.html): ${err.message}`);
+      app.quit();
+    });
 
   mainWindow.once('ready-to-show', () => {
+    console.log('[main.js] createMainWindow: Evento "ready-to-show" disparado. Mostrando a janela.');
     mainWindow.show();
-    if (!app.isPackaged) { // Abrir DevTools apenas em desenvolvimento
-        // mainWindow.webContents.openDevTools();
+    if (!app.isPackaged) {
+        mainWindow.webContents.openDevTools(); // ABRIR DEVTOOLS EM DESENVOLVIMENTO
     }
   });
 
   mainWindow.on('closed', () => {
+    console.log('[main.js] createMainWindow: Evento "closed" da janela principal.');
     mainWindow = null;
   });
-
-  initializeServices();
+  console.log('[main.js] ---- createMainWindow: FIM ----');
 }
 
 function sendToRenderer(channel, data) {
     if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(channel, data);
+    } else {
+        console.warn(`[main.js] sendToRenderer: Tentativa de enviar para o renderer no canal '${channel}', mas a janela não está pronta ou foi destruída.`);
     }
 }
 
 // --- Handlers IPC ---
 ipcMain.handle('get-firebase-config', () => {
   console.log('[main.js] Handler get-firebase-config chamado.');
-  // console.log('[main.js] Handler - Conteúdo de FIREBASE_APP_CONFIG:', JSON.stringify(FIREBASE_APP_CONFIG));
   if (
     !FIREBASE_APP_CONFIG ||
     !FIREBASE_APP_CONFIG.apiKey ||
     !FIREBASE_APP_CONFIG.authDomain ||
     !FIREBASE_APP_CONFIG.projectId
   ) {
-    console.error(
-      "[main.js] Handler get-firebase-config: Objeto FIREBASE_APP_CONFIG está incompleto."
-    );
-    return null;
+    console.error("[main.js] Handler get-firebase-config: Objeto FIREBASE_APP_CONFIG está incompleto ou ausente.");
+    return null; // Retornar null para o renderer tratar
   }
   return FIREBASE_APP_CONFIG;
 });
@@ -199,10 +276,19 @@ ipcMain.on('login-successful', () => {
     } else {
         indexHtmlPath = path.join(__dirname, 'renderer', 'index.html');
     }
+
+    if (!fs.existsSync(indexHtmlPath)) {
+        console.error(`[main.js] login-successful: ERRO - Arquivo index.html NÃO ENCONTRADO em: ${indexHtmlPath}`);
+        dialog.showErrorBox('Erro Crítico', `Arquivo de dashboard (index.html) não encontrado.`);
+        return; // Não tentar carregar
+    }
     console.log(`[main.js] Carregando index HTML de: ${indexHtmlPath}`);
     mainWindow.loadFile(indexHtmlPath)
       .then(() => console.log("MAIN (ESM): index.html carregado."))
-      .catch(err => console.error("MAIN (ESM): Erro ao carregar index.html", err));
+      .catch(err => {
+          console.error("MAIN (ESM): Erro ao carregar index.html", err);
+          dialog.showErrorBox('Erro ao Carregar Dashboard', `Falha ao carregar a página principal: ${err.message}`);
+      });
   }
 });
 
@@ -215,10 +301,18 @@ ipcMain.on('logout-request', () => {
     } else {
         loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');
     }
+    if (!fs.existsSync(loginHtmlPath)) {
+        console.error(`[main.js] logout-request: ERRO - Arquivo login.html NÃO ENCONTRADO em: ${loginHtmlPath}`);
+        dialog.showErrorBox('Erro Crítico', `Arquivo de login (login.html) não encontrado.`);
+        return;
+    }
     console.log(`[main.js] Carregando login HTML (logout) de: ${loginHtmlPath}`);
     mainWindow.loadFile(loginHtmlPath)
       .then(() => console.log("MAIN (ESM): login.html carregado após logout."))
-      .catch(err => console.error("MAIN (ESM): Erro ao carregar login.html após logout", err));
+      .catch(err => {
+          console.error("MAIN (ESM): Erro ao carregar login.html após logout", err);
+          dialog.showErrorBox('Erro ao Fazer Logout', `Falha ao carregar a página de login: ${err.message}`);
+      });
   }
 });
 
@@ -226,16 +320,35 @@ ipcMain.handle('get-app-version', () => {
     return app.getVersion();
 });
 
-ipcMain.on('request-video-processing', async (event, data) => {
-  const { youtubeUrl, empresaId, projetoId } = data;
+ipcMain.on('request-video-processing', async (event, dataWithToken) => {
+  const { youtubeUrl, empresaId, projetoId, firebaseIdToken } = dataWithToken;
   const logPrefix = `[PROJETO ${projetoId}][EMPRESA ${empresaId}]`;
   let tempFilePath = null;
+  let fileSize = 0;
 
-  if (!minioService) {
-    console.error(`MAIN (ESM): ${logPrefix} MinioService não inicializado. Abortando.`);
+  if (!firebaseIdToken) {
+    console.error(`MAIN (ESM): ${logPrefix} Firebase ID Token não fornecido na requisição. Abortando.`);
     sendToRenderer('video-processing-result', {
         success: false, empresaId, projetoId,
-        error: 'Serviço de Storage (Minio) não está disponível.'
+        error: 'Autenticação do usuário falhou (token não fornecido).'
+    });
+    return;
+  }
+
+  if (!preSignedUrlService) {
+    console.error(`MAIN (ESM): ${logPrefix} PreSignedUrlService não inicializado. Abortando.`);
+    sendToRenderer('video-processing-result', {
+        success: false, empresaId, projetoId,
+        error: 'Serviço de obtenção de URL para upload não está disponível.'
+    });
+    return;
+  }
+  
+  if (!bucketService) {
+    console.error(`MAIN (ESM): ${logPrefix} BucketService (para upload) não inicializado. Abortando.`);
+    sendToRenderer('video-processing-result', {
+        success: false, empresaId, projetoId,
+        error: 'Serviço de upload de arquivo não está disponível.'
     });
     return;
   }
@@ -255,27 +368,65 @@ ipcMain.on('request-video-processing', async (event, data) => {
     tempFilePath = await downloadService.downloadVideo(youtubeUrl, projetoId);
     const validation = downloadService.validateDownloadedFile(tempFilePath);
     if (!validation.valid) {
-        console.error(`MAIN (ESM): ${logPrefix} Arquivo baixado inválido: ${validation.reason}.`);
         throw new Error(`Arquivo baixado inválido: ${validation.reason}`);
     }
-    console.log(`MAIN (ESM): ${logPrefix} Arquivo validado. Tamanho: ${(validation.size / (1024*1024)).toFixed(2)}MB`);
+    fileSize = validation.size;
+    console.log(`MAIN (ESM): ${logPrefix} Arquivo validado. Tamanho: ${(fileSize / (1024*1024)).toFixed(2)}MB`);
 
-    sendToRenderer('monitoring-status-update', `${logPrefix} Download concluído. Upload para Minio...`);
+    sendToRenderer('monitoring-status-update', `${logPrefix} Download concluído. Solicitando URL de upload...`);
 
     const videoFileName = path.basename(tempFilePath);
-    const minioObjectName = `shorts/${projetoId}/${videoFileName}`;
+    const contentType = mime.lookup(tempFilePath) || 'application/octet-stream';
+    let preSignedApiResponse;
+    let objectKeyForFirestore;
 
-    await minioService.uploadFile(minioObjectName, tempFilePath);
-    console.log(`MAIN (ESM): ${logPrefix} Upload para Minio concluído.`);
-    
-    sendToRenderer('video-processing-result', {
-      success: true, empresaId, projetoId, minioPath: minioObjectName
-    });
+    try {
+        preSignedApiResponse = await preSignedUrlService.getPreSignedUrl(
+            firebaseIdToken,
+            projetoId,
+            videoFileName,
+            contentType
+        );
+        console.log(`MAIN (ESM): ${logPrefix} URL pré-assinada obtida: ${preSignedApiResponse.upload_url.substring(0, 70)}...`);
+        
+        objectKeyForFirestore = preSignedApiResponse.object_key || `shorts/${projetoId}/${videoFileName}`; 
+        
+        if (preSignedApiResponse.object_key) {
+            console.log(`MAIN (ESM): ${logPrefix} Chave do objeto retornada pela API: ${objectKeyForFirestore}`);
+        } else {
+            console.warn(`MAIN (ESM): ${logPrefix} Chave do objeto ('object_key') não retornada pela API. Usando construída: ${objectKeyForFirestore}`);
+        }
+
+    } catch (urlError) {
+        console.error(`MAIN (ESM): ${logPrefix} Erro ao obter URL pré-assinada:`, urlError.message);
+        throw new Error(`Falha ao obter URL de upload: ${urlError.message}`);
+    }
+
+    try {
+        sendToRenderer('monitoring-status-update', `${logPrefix} Fazendo upload para URL pré-assinada...`);
+        await bucketService.uploadFile(
+            preSignedApiResponse.upload_url,
+            tempFilePath,
+            contentType,
+            fileSize,
+            (percent, uploaded, total) => {
+                let progressMsg = `${logPrefix} Upload: ${percent >= 0 ? percent.toFixed(0) + '%' : ''} (${(uploaded / (1024*1024)).toFixed(2)}MB${total > 0 ? ' / '+(total / (1024*1024)).toFixed(2)+'MB' : ' enviados'})`;
+                sendToRenderer('monitoring-status-update', progressMsg);
+            }
+        );
+        console.log(`MAIN (ESM): ${logPrefix} Upload para URL pré-assinada concluído.`);
+        sendToRenderer('video-processing-result', {
+          success: true, empresaId, projetoId, storagePath: objectKeyForFirestore
+        });
+    } catch (uploadError) {
+        console.error(`MAIN (ESM): ${logPrefix} Erro durante o upload para URL pré-assinada:`, uploadError.message);
+        throw new Error(`Falha no upload: ${uploadError.message}`);
+    }
 
   } catch (error) {
-    console.error(`MAIN (ESM): ${logPrefix} Erro no processamento do vídeo:`, error.message);
+    console.error(`MAIN (ESM): ${logPrefix} Erro no processamento do vídeo (global):`, error.message);
     sendToRenderer('video-processing-result', {
-      success: false, empresaId, projetoId, error: error.message || 'Erro desconhecido'
+      success: false, empresaId, projetoId, error: error.message || 'Erro desconhecido no processamento global'
     });
   } finally {
     if (tempFilePath) {
@@ -286,7 +437,9 @@ ipcMain.on('request-video-processing', async (event, data) => {
 
 // --- Ciclo de Vida do App ---
 app.whenReady().then(() => {
-  createMainWindow(); // Usa a função createMainWindow ajustada
+  console.log('[main.js] app.whenReady: INÍCIO');
+  createMainWindow();
+  initializeServices(); // Inicializa os serviços após a janela principal ser criada (ou em paralelo)
 
   const isMac = process.platform === 'darwin';
   const menuTemplate = [
@@ -375,9 +528,14 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(menu);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow();
+        // Se a janela for recriada no 'activate', os serviços já devem ter sido inicializados
+        // Se initializeServices depende de mainWindow, então chame-o aqui também ou repense a dependência.
+        // No nosso caso, initializeServices não depende de mainWindow para ser instanciado.
+    }
   });
-  console.log('MAIN (ESM): App pronto e menu configurado.');
+  console.log('[main.js] app.whenReady: FIM - App pronto e menu configurado.');
 });
 
 app.on('window-all-closed', () => {
