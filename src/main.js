@@ -28,11 +28,8 @@ console.log(`[main.js] __dirname (inicial, onde main.js reside): ${__dirname}`);
 try {
     let configPath;
     if (app.isPackaged) {
-        configPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'app-config.json');
-        // Alternativamente, se app-config.json está na raiz do asar (após build)
-        // configPath = path.join(path.dirname(app.getAppPath()), 'app-config.json');
-        // Ou se o main.js estiver em app.asar/src e o config em app.asar/dist
-        // configPath = path.join(__dirname, '..', 'dist', 'app-config.json'); // Esta era a suposição anterior
+        // configPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'app-config.json');
+        configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
     } else {
         configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
     }
