@@ -1,55 +1,108 @@
 // src/main.js
-// Este arquivo agora é um ES Module devido ao "type": "module" no package.json.
-
-import 'dotenv/config'; // Para carregar variáveis de .env - use 'dotenv/config' para efeito imediato
-
 import path from 'path';
-import { fileURLToPath } from 'url'; // Necessário para __dirname e __filename em ESM
-
-// Importações de módulos Electron
+import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import fs from 'fs'; // Para ler o arquivo de config
 
-// Importações de seus módulos locais (agora ESM)
-import FIREBASE_APP_CONFIG from './config/firebaseConfig.js';
-import MINIO_CFG_FROM_ENV from './config/minioConfig.js';
+// Importe APENAS os objetos de configuração (eles serão preenchidos)
+import FIREBASE_APP_CFG_OBJ from './config/firebaseConfig.js';
+import MINIO_CFG_OBJ from './config/minioConfig.js';
+
+// Importe os serviços
 import DownloadService from './services/downloadService.js';
 import MinioService from './services/minioService.js';
 
 // Obter __dirname e __filename em ESM
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(__filename); // Em dev: aponta para src. Em prod (asar): aponta para a raiz do asar onde main.js está.
 
-console.log('MAIN (ESM): Processo principal iniciado.');
+let APP_CONFIG_FROM_JSON;
+
+console.log(`[main.js] INÍCIO DO ARQUIVO. app.isPackaged: ${app.isPackaged}`);
+console.log(`[main.js] __dirname (inicial, onde main.js reside): ${__dirname}`);
+
+try {
+    let configPath;
+    if (app.isPackaged) {
+        // Quando empacotado, __dirname do main.js (que está em app.asar/src/main.js se "src" foi mantido na estrutura)
+        // O app-config.json foi colocado na raiz do asar por "dist/app-config.json" nos files.
+        // Se main.js está em app.asar/src/main.js, precisamos voltar um nível de 'src'.
+        // Se main.js está em app.asar/main.js, então é path.join(__dirname, 'app-config.json').
+        // Assumindo que a estrutura "src" é mantida dentro do asar para o main.js:
+        // configPath = path.join(__dirname, '..', 'app-config.json');
+        configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
+    } else {
+        // Em dev, __dirname é src. O config.json é gerado em ../dist/app-config.json
+        configPath = path.join(__dirname, '..', 'dist', 'app-config.json');
+    }
+
+    console.log(`[main.js] Tentando carregar config de: ${configPath}`);
+    const configFile = fs.readFileSync(configPath, 'utf-8');
+    APP_CONFIG_FROM_JSON = JSON.parse(configFile);
+
+    // Preencher os objetos de configuração importados
+    if (APP_CONFIG_FROM_JSON.firebase) {
+        Object.assign(FIREBASE_APP_CFG_OBJ, APP_CONFIG_FROM_JSON.firebase);
+    } else {
+        console.error('[main.js] Chave "firebase" não encontrada em app-config.json');
+    }
+
+    if (APP_CONFIG_FROM_JSON.minio) {
+        Object.assign(MINIO_CFG_OBJ, APP_CONFIG_FROM_JSON.minio);
+    } else {
+        console.error('[main.js] Chave "minio" não encontrada em app-config.json');
+    }
+
+    console.log('[main.js] Configuração carregada de app-config.json.');
+    // console.log('[main.js] FIREBASE_APP_CFG_OBJ após carregar JSON:', JSON.stringify(FIREBASE_APP_CFG_OBJ));
+    // console.log('[main.js] MINIO_CFG_OBJ após carregar JSON:', JSON.stringify(MINIO_CFG_OBJ));
+
+} catch (error) {
+    console.error('[main.js] ERRO FATAL: Não foi possível carregar ou parsear app-config.json!', error);
+    // Deixa os objetos de config vazios ou com padrões, as checagens posteriores devem falhar.
+    Object.assign(FIREBASE_APP_CFG_OBJ, {}); // Garante que seja um objeto para evitar erros de undefined
+    Object.assign(MINIO_CFG_OBJ, {});     // Garante que seja um objeto
+}
+
+// Renomeia para manter consistência com o código anterior
+const FIREBASE_APP_CONFIG = FIREBASE_APP_CFG_OBJ;
+const MINIO_CFG_FROM_ENV = MINIO_CFG_OBJ; // Pode ser renomeado para MINIO_APP_CONFIG
+
+console.log('MAIN (ESM): Processo principal iniciado (após tentativa de carregar config).');
+
 // Checagem inicial se as configs foram carregadas
 if (FIREBASE_APP_CONFIG && FIREBASE_APP_CONFIG.apiKey) {
-    console.log('MAIN (ESM): Firebase Config (from firebaseConfig.js) carregada.');
+    console.log('MAIN (ESM): Firebase Config carregada e parece válida.');
 } else {
-    console.error('MAIN (ESM): FALHA ao carregar Firebase Config. Verifique o módulo e as env vars.');
+    console.error('MAIN (ESM): FALHA ao validar Firebase Config após carregar JSON.');
+    console.log('MAIN (ESM): Conteúdo de FIREBASE_APP_CONFIG:', JSON.stringify(FIREBASE_APP_CONFIG));
 }
 if (MINIO_CFG_FROM_ENV && MINIO_CFG_FROM_ENV.endpoint) {
-    console.log('MAIN (ESM): Minio Config (from minioConfig.js) carregada.');
+    console.log('MAIN (ESM): Minio Config carregada e parece válida.');
 } else {
-    console.error('MAIN (ESM): FALHA ao carregar Minio Config. Verifique o módulo e as env vars.');
+    console.error('MAIN (ESM): FALHA ao validar Minio Config após carregar JSON.');
+    console.log('MAIN (ESM): Conteúdo de MINIO_CFG_FROM_ENV:', JSON.stringify(MINIO_CFG_FROM_ENV));
 }
 
 let mainWindow;
 let minioService;
 
-const minioServiceConfig = {
-    ...MINIO_CFG_FROM_ENV,
+// Configuração para o MinioService que será passada ao construtor
+const minioServiceConfigForConstructor = {
+    ...MINIO_CFG_FROM_ENV, // Spread do objeto de configuração já preenchido
     onLog: (message) => console.log(`MAIN (ESM) (MinioService): ${message}`)
 };
 
 function initializeServices() {
     try {
-        if (!minioServiceConfig.endpoint || !minioServiceConfig.accessKey || !minioServiceConfig.secretKey || !minioServiceConfig.bucketName) {
-            console.error("MAIN (ESM): Configuração essencial do Minio ausente. Verifique minioConfig.js e .env.");
+        if (!MINIO_CFG_FROM_ENV.endpoint || !MINIO_CFG_FROM_ENV.accessKey || !MINIO_CFG_FROM_ENV.secretKey || !MINIO_CFG_FROM_ENV.bucketName) {
+            console.error("MAIN (ESM) (initializeServices): Configuração essencial do Minio ausente. Uploads desabilitados.");
             if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
                 setTimeout(() => sendToRenderer('monitoring-status-update', 'ERRO FATAL: Falha na configuração do Storage. Uploads desabilitados.'), 1000);
             }
             return;
         }
-        minioService = new MinioService(minioServiceConfig);
+        minioService = new MinioService(minioServiceConfigForConstructor);
         console.log('MAIN (ESM): MinioService inicializado com sucesso.');
       } catch (error) {
         console.error("MAIN (ESM): FALHA AO INICIALIZAR MINIOSERVICE!", error);
@@ -61,25 +114,49 @@ function initializeServices() {
 
 function createMainWindow() {
   console.log('MAIN (ESM): Criando janela principal.');
+
+  let preloadPath;
+  let loginHtmlPath;
+  // A estrutura de arquivos dentro do ASAR depende da configuração 'files' do electron-builder.
+  // Se "src/main.js" -> asarRoot/src/main.js, então __dirname = asarRoot/src
+  // Se "dist/preload-bundle.js" -> asarRoot/preload-bundle.js
+  // Se "src/renderer/login.html" -> asarRoot/src/renderer/login.html
+
+  if (app.isPackaged) {
+    // Assumindo que main.js está em asarRoot/src/main.js devido a "src/**/*" e "main": "src/main.js"
+    // preloadPath = path.join(__dirname, '..', 'preload-bundle.js'); // Volta de 'src' para a raiz do asar
+    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js');
+    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html'); // Dentro de 'src/renderer' no asar
+  } else {
+    // Em desenvolvimento: __dirname é a pasta 'src'
+    preloadPath = path.join(__dirname, '..', 'dist', 'preload-bundle.js');
+    loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');
+  }
+
+  console.log(`[main.js] Usando preload path para BrowserWindow: ${preloadPath}`);
+  console.log(`[main.js] Carregando login HTML de: ${loginHtmlPath}`);
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, '../dist/preload-bundle.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
     },
     show: false,
-    icon: path.join(__dirname, '../build/icon.png')
+    // O ícone do aplicativo é definido pela configuração do electron-builder no package.json.
+    // Não é necessário definir 'icon' aqui para a janela principal, a menos que queira um ícone de janela diferente.
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer/login.html'));
+  mainWindow.loadFile(loginHtmlPath);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // Descomente para abrir DevTools automaticamente ao iniciar (para depuração)
-    // mainWindow.webContents.openDevTools(); 
+    if (!app.isPackaged) { // Abrir DevTools apenas em desenvolvimento
+        // mainWindow.webContents.openDevTools();
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -92,13 +169,13 @@ function createMainWindow() {
 function sendToRenderer(channel, data) {
     if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(channel, data);
-    } else {
-        // console.warn(`MAIN (ESM): Tentativa de enviar para renderer no canal ${channel}, mas mainWindow não está disponível.`);
     }
 }
 
 // --- Handlers IPC ---
 ipcMain.handle('get-firebase-config', () => {
+  console.log('[main.js] Handler get-firebase-config chamado.');
+  // console.log('[main.js] Handler - Conteúdo de FIREBASE_APP_CONFIG:', JSON.stringify(FIREBASE_APP_CONFIG));
   if (
     !FIREBASE_APP_CONFIG ||
     !FIREBASE_APP_CONFIG.apiKey ||
@@ -106,7 +183,7 @@ ipcMain.handle('get-firebase-config', () => {
     !FIREBASE_APP_CONFIG.projectId
   ) {
     console.error(
-      "MAIN (ESM) (get-firebase-config): Configuração do Firebase capturada está incompleta ou ausente."
+      "[main.js] Handler get-firebase-config: Objeto FIREBASE_APP_CONFIG está incompleto."
     );
     return null;
   }
@@ -116,7 +193,14 @@ ipcMain.handle('get-firebase-config', () => {
 ipcMain.on('login-successful', () => {
   console.log('MAIN (ESM): Login bem-sucedido. Carregando index.html.');
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'))
+    let indexHtmlPath;
+    if (app.isPackaged) {
+        indexHtmlPath = path.join(__dirname, 'renderer', 'index.html');
+    } else {
+        indexHtmlPath = path.join(__dirname, 'renderer', 'index.html');
+    }
+    console.log(`[main.js] Carregando index HTML de: ${indexHtmlPath}`);
+    mainWindow.loadFile(indexHtmlPath)
       .then(() => console.log("MAIN (ESM): index.html carregado."))
       .catch(err => console.error("MAIN (ESM): Erro ao carregar index.html", err));
   }
@@ -125,7 +209,14 @@ ipcMain.on('login-successful', () => {
 ipcMain.on('logout-request', () => {
   console.log('MAIN (ESM): Solicitação de logout. Carregando login.html.');
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.loadFile(path.join(__dirname, 'renderer/login.html'))
+    let loginHtmlPath;
+     if (app.isPackaged) {
+        loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');
+    } else {
+        loginHtmlPath = path.join(__dirname, 'renderer', 'login.html');
+    }
+    console.log(`[main.js] Carregando login HTML (logout) de: ${loginHtmlPath}`);
+    mainWindow.loadFile(loginHtmlPath)
       .then(() => console.log("MAIN (ESM): login.html carregado após logout."))
       .catch(err => console.error("MAIN (ESM): Erro ao carregar login.html após logout", err));
   }
@@ -195,9 +286,8 @@ ipcMain.on('request-video-processing', async (event, data) => {
 
 // --- Ciclo de Vida do App ---
 app.whenReady().then(() => {
-  createMainWindow(); // Cria a janela principal
+  createMainWindow(); // Usa a função createMainWindow ajustada
 
-  // ---- INÍCIO DA SEÇÃO DO MENU RESTAURADA ----
   const isMac = process.platform === 'darwin';
   const menuTemplate = [
     ...(isMac ? [{
@@ -245,7 +335,7 @@ app.whenReady().then(() => {
       submenu: [
         { role: 'reload', label: 'Recarregar' },
         { role: 'forceReload', label: 'Forçar Recarregamento' },
-        { role: 'toggleDevTools', label: 'Alternar Ferramentas do Desenvolvedor' }, // <--- AQUI
+        { role: 'toggleDevTools', label: 'Alternar Ferramentas do Desenvolvedor' },
         { type: 'separator' },
         { role: 'resetZoom', label: 'Restaurar Zoom' },
         { role: 'zoomIn', label: 'Aumentar Zoom' },
@@ -274,7 +364,6 @@ app.whenReady().then(() => {
         {
           label: 'Saber Mais sobre Electron',
           click: async () => {
-            // shell já foi importado no topo
             await shell.openExternal('https://electronjs.org');
           }
         }
@@ -284,8 +373,6 @@ app.whenReady().then(() => {
 
   const menu = Menu.buildFromTemplate(menuTemplate);
   Menu.setApplicationMenu(menu);
-  // ---- FIM DA SEÇÃO DO MENU RESTAURADA ----
-
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
