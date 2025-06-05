@@ -27,11 +27,12 @@ jobs:
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: npm run build:linux
-    # - name: publish
-    #   env:
-    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   run: npm run publish
+    - name: publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npm run publish
 
   build_on_mac:
     runs-on: macos-latest
@@ -61,11 +62,12 @@ jobs:
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: npm run build:mac
-    # - name: publish
-    #   env:
-    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   run: npm run publish
+    - name: publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npm run publish
 
   build_on_win:
     runs-on: windows-latest
@@ -91,8 +93,9 @@ jobs:
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: npm run build:win
-    # - name: publish
-    #   env:
-    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   run: npm run publish
+    - name: publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npm run publish
