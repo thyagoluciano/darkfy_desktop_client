@@ -25,7 +25,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v1
         with:
-          node-version: 10
+          node-version: 22.16.0
 
       - name: Build/release Electron app
         env:
