@@ -16,7 +16,10 @@
     "dist:win": "npm run build:css && electron-builder --win --publish never",
     "dist:linux": "npm run build:css && electron-builder --linux --publish never",
     "postinstall": "electron-builder install-app-deps",
-    "build": "npm run build:css && electron-builder --mac --windows --linux",
+    "build:linux": "npm run build:css && electron-builder --linux",
+    "build:mac": "npm run build:css && electron-builder --mac",
+    "build:win": "npm run build:css && electron-builder --windows",
+    "publish": "electron-builder --mac --windows --linux -p always",
     "release": "electron-builder --mac --windows --linux --publish always"
   },
   "keywords": [
