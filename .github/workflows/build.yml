@@ -45,13 +45,15 @@ jobs:
       with:
         node-version: 22
     - name: install dependencies
-      run: npm install
+      run: npm ci
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
-    - name: install mac-specific build tools
-      run: npm install dmg-license
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
+    # - name: install mac-specific build tools
+    #   run: npm install dmg-license
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
+    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
     - name: build
       env:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
