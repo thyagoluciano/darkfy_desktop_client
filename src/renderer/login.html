@@ -3,34 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- 
-      Content Security Policy (CSP)
-      - default-src 'self': Permite carregar recursos apenas da mesma origem (seu app).
-      - script-src 'self' https://www.gstatic.com: Permite scripts da mesma origem e do gstatic.com (para Firebase).
-      - style-src 'self': Permite estilos da mesma origem. (Seu output.css).
-      - connect-src 'self' https://identitytoolkit.googleapis.com https://firestore.googleapis.com: Permite conexões para Firebase Auth e Firestore.
-      - img-src 'self' data:: Permite imagens da mesma origem e data URIs.
-      - font-src 'self': Permite fontes da mesma origem.
-    -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
-        script-src 'self' https://www.gstatic.com;
-        style-src 'self';
+        script-src 'self' https://www.gstatic.com; 
+        style-src 'self' 'unsafe-inline'; 
         connect-src 'self'
                     https://identitytoolkit.googleapis.com
-                    https://firestore.googleapis.com;
-        img-src 'self' data:;
+                    https://firestore.googleapis.com
+                    wss://firestore.googleapis.com 
+                    https://securetoken.googleapis.com;
+        img-src 'self' data: https://www.google.com; 
         font-src 'self';
     ">
     <title>Login - Darkfy Client</title>
     <link rel="stylesheet" href="./css/output.css">
-    <!-- <link rel="stylesheet" href="./renderer/css/output.css"> -->
 </head>
 <body class="bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center min-h-screen font-sans antialiased p-4">
 
     <div class="bg-white/90 backdrop-blur-sm p-8 md:p-10 rounded-xl shadow-2xl w-full max-w-md transform transition-all duration-300 ease-in-out">
         <div class="text-center mb-8">
-            <!-- <img src="path/to/your/logo.svg" alt="Darkfy Logo" class="mx-auto h-12 w-auto mb-4"> -->
             <h1 class="text-3xl font-bold text-slate-800">Darkfy Client</h1>
             <p class="text-slate-600 mt-2">Acesse sua conta para continuar</p>
         </div>
@@ -64,9 +55,12 @@
         </div>
     </div>
 
+    <!-- Firebase SDK (Compat version) -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
 
+    <!-- Renderer script carregado como módulo -->
     <script type="module" src="./loginRenderer.js"></script>
 </body>
 </html>

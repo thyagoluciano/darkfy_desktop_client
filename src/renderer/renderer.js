@@ -1,140 +1,113 @@
 // src/renderer/renderer.js
-// Firebase Global (será inicializado após obter a config)
-let fbApp;
-let fbAuth;
-let fbDb;
+// Este script é carregado com <script type="module"> no index.html
 
-// DECLARE as variáveis dos elementos da UI aqui, mas NÃO as atribua ainda.
+import FirebaseService from '../services/firebaseService.js'; // Caminho para o serviço
+
+let firebaseServiceInstance;
 let appHeader, headerEmpresaNome, headerUserEmail, headerLogoutButton;
 let userInfoDebug, monitoringStatusDisplay, queueCountSpan;
 let videoQueueListDisplay, currentVideoProcessingDisplay;
 let yearSpanMain, versionSpanMain;
 
-// O restante das variáveis globais (currentUID, etc.) permanece como está
 let currentUID = null;
 let empresaAtivaId = null;
 let nomeEmpresaAtiva = 'N/A';
-let unsubscribeFirestoreListener = null;
+let unsubscribeFirestoreListener = null; // Armazena a função de cancelamento do listener
 let cleanupVideoProcessingResultListener = null;
 let cleanupMonitoringStatusListener = null;
 
 let videoProcessingQueue = [];
 let isCurrentlyProcessingVideo = false;
 
-console.log('RENDERER (Dashboard): renderer.js carregado.');
+console.log('RENDERER (Dashboard) (ESM): renderer.js carregado.');
 
-// --- Listener para quando o DOM estiver pronto ---
 document.addEventListener('DOMContentLoaded', () => {
-    // AGORA que o DOM está pronto, podemos buscar os elementos
     appHeader = document.getElementById('app-header');
     headerEmpresaNome = document.getElementById('header-empresa-nome');
     headerUserEmail = document.getElementById('header-user-email');
     headerLogoutButton = document.getElementById('header-logout-button');
-
-    userInfoDebug = document.getElementById('user-info'); // Para debug
+    userInfoDebug = document.getElementById('user-info');
     monitoringStatusDisplay = document.getElementById('monitoring-status');
     queueCountSpan = document.getElementById('queue-count');
-
     videoQueueListDisplay = document.getElementById('video-queue-list');
     currentVideoProcessingDisplay = document.getElementById('current-video-processing');
-
     yearSpanMain = document.getElementById('current-year-main');
     versionSpanMain = document.getElementById('app-version-main');
 
-    // Adicionar folha de estilo para animações
+    // Adicionar folha de estilo para animações (se não estiver em um CSS global)
+    // Esta parte pode ser removida se a CSP for ajustada e a classe .animate-fadeIn já estiver no output.css
     const styleSheet = document.createElement("style");
     styleSheet.type = "text/css";
-    styleSheet.innerText = `
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
-    `;
+    styleSheet.innerText = `@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }`;
     document.head.appendChild(styleSheet);
     
-    // Iniciar a aplicação APÓS o DOM estar pronto e elementos referenciados
     initializeApp();
 });
 
-
-// Função para inicializar Firebase e configurar a UI e listeners
 async function initializeApp() {
     if (!monitoringStatusDisplay) { 
-        console.error("RENDERER: monitoringStatusDisplay é nulo ANTES de inicializar. DOM não pronto?");
+        console.error("RENDERER (ESM): monitoringStatusDisplay é nulo ANTES de inicializar. DOM não pronto?");
         return;
     }
 
-    if (yearSpanMain) {
-        yearSpanMain.textContent = new Date().getFullYear();
-    }
+    if (yearSpanMain) yearSpanMain.textContent = new Date().getFullYear();
     
     if (window.electronAPI && window.electronAPI.getAppVersion) {
         try {
             const version = await window.electronAPI.getAppVersion();
             if (versionSpanMain) versionSpanMain.textContent = version;
         } catch (err) {
-            console.error("RENDERER: Erro ao obter versão do app", err);
+            console.error("RENDERER (ESM): Erro ao obter versão do app", err);
             if (versionSpanMain) versionSpanMain.textContent = "N/A";
         }
     } else {
-        console.warn("RENDERER: electronAPI.getAppVersion não disponível no preload.");
-        if (versionSpanMain) versionSpanMain.textContent = "N/A";
+        if (versionSpanMain) versionSpanMain.textContent = "N/A"; // Evitar undefined na UI
+        console.warn("RENDERER (ESM): electronAPI.getAppVersion não disponível no preload.");
     }
 
-    // Obter configuração do Firebase e inicializar
     if (window.electronAPI && window.electronAPI.getFirebaseConfig) {
         try {
+            // console.log("RENDERER (ESM): Solicitando configuração do Firebase do main process..."); // Verboso
             const firebaseConfigFromMain = await window.electronAPI.getFirebaseConfig();
-            if (firebaseConfigFromMain) {
-                fbApp = firebase.initializeApp(firebaseConfigFromMain);
-                fbAuth = firebase.auth();
-                fbDb = firebase.firestore(); 
-                console.log('RENDERER: Firebase inicializado com configuração do main process.');
+            if (firebaseConfigFromMain && firebaseConfigFromMain.apiKey) {
+                // console.log('RENDERER (ESM): Configuração do Firebase recebida.'); // Verboso
+                firebaseServiceInstance = new FirebaseService(firebaseConfigFromMain);
+                console.log('RENDERER (ESM): FirebaseService inicializado.');
                 setupAuthListenerAndUI(); 
             } else {
-                console.error('RENDERER: Configuração do Firebase não recebida do main process.');
-                if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro crítico: Falha ao carregar configurações.';
+                console.error('RENDERER (ESM): Configuração do Firebase NÃO recebida ou inválida do main process.', firebaseConfigFromMain);
+                if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro crítico: Falha ao carregar configurações do servidor.';
             }
         } catch (error) {
-            console.error('RENDERER: Erro ao obter ou inicializar Firebase:', error);
-            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro crítico: Falha nas configurações.';
+            console.error('RENDERER (ESM): Erro ao obter config ou inicializar FirebaseService:', error);
+            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro crítico: ${error.message || 'Falha nas configurações.'}`;
         }
     } else {
-        console.error('RENDERER: electronAPI.getFirebaseConfig não está disponível.');
+        console.error('RENDERER (ESM): electronAPI.getFirebaseConfig não está disponível.');
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro crítico: API de comunicação falhou.';
     }
 }
 
-// Função para configurar o listener de autenticação e a lógica da UI principal
 function setupAuthListenerAndUI() {
-    if (!fbAuth) {
-        console.error("RENDERER: fbAuth não inicializado antes de setupAuthListenerAndUI.");
-        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro: Firebase Auth não está pronto.';
+    if (!firebaseServiceInstance) {
+        console.error("RENDERER (ESM): FirebaseService não instanciado antes de setupAuthListenerAndUI.");
+        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro: Serviço de autenticação indisponível.';
         return;
     }
 
     if (!appHeader || !headerUserEmail || !headerEmpresaNome || !monitoringStatusDisplay || !headerLogoutButton) {
-        console.error("RENDERER: Um ou mais elementos essenciais do DOM não foram encontrados em setupAuthListenerAndUI.");
+        console.error("RENDERER (ESM): Um ou mais elementos essenciais do DOM não foram encontrados em setupAuthListenerAndUI.");
         if(monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Erro: Falha ao carregar interface.';
         return;
     }
 
-    fbAuth.onAuthStateChanged(async (user) => {
+    firebaseServiceInstance.onAuthStateChanged(async (user) => {
       if (user) {
         currentUID = user.uid;
-        console.log(`RENDERER: Usuário logado: ${user.email} (UID: ${currentUID})`);
-        
-        appHeader.classList.remove('hidden');
-        headerUserEmail.textContent = user.email;
-        if (userInfoDebug) userInfoDebug.innerHTML = `UID: ${currentUID}<br>Email: ${user.email}`;
-
-        monitoringStatusDisplay.textContent = 'Obtendo informações da empresa...';
-        headerEmpresaNome.textContent = 'Carregando...';
-
-        await setupUserSession(currentUID); 
+        // console.log(`RENDERER (ESM): Usuário logado: ${user.email} (UID: ${currentUID})`); // Verboso
+        await setupUserSession(currentUID, user.email); 
       } else {
-        console.log('RENDERER: Usuário deslogado.');
+        console.log('RENDERER (ESM): Usuário deslogado.');
         currentUID = null;
         empresaAtivaId = null;
         nomeEmpresaAtiva = 'N/A';
@@ -142,20 +115,21 @@ function setupAuthListenerAndUI() {
         if (appHeader) appHeader.classList.add('hidden');
         
         if (unsubscribeFirestoreListener) {
-          console.log('RENDERER: Cancelando listener do Firestore.');
-          unsubscribeFirestoreListener();
+          console.log('RENDERER (ESM): Cancelando listener do Firestore.');
+          unsubscribeFirestoreListener(); // Chama a função de cleanup retornada pelo onSnapshot
           unsubscribeFirestoreListener = null;
         }
         if (cleanupVideoProcessingResultListener) {
-            cleanupVideoProcessingResultListener();
+            cleanupVideoProcessingResultListener(); // Chama a função de cleanup do preload
             cleanupVideoProcessingResultListener = null;
         }
         if (cleanupMonitoringStatusListener) {
-            cleanupMonitoringStatusListener();
+            cleanupMonitoringStatusListener(); // Chama a função de cleanup do preload
             cleanupMonitoringStatusListener = null;
         }
 
         videoProcessingQueue = [];
+        isCurrentlyProcessingVideo = false; // Resetar estado
         updateVideoQueueUI(); 
         updateCurrentProcessingUI(null);
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Deslogado. Redirecionando para login...';
@@ -163,7 +137,7 @@ function setupAuthListenerAndUI() {
         if (window.electronAPI && window.electronAPI.requestLogoutNavigation) {
             window.electronAPI.requestLogoutNavigation();
         } else {
-            console.error('RENDERER: electronAPI.requestLogoutNavigation não está disponível.');
+            console.error('RENDERER (ESM): electronAPI.requestLogoutNavigation não está disponível.');
         }
       }
     });
@@ -172,18 +146,31 @@ function setupAuthListenerAndUI() {
       headerLogoutButton.addEventListener('click', async () => {
         try {
           if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = "Saindo...";
-          await fbAuth.signOut();
+          await firebaseServiceInstance.logout();
         } catch (error) {
-          console.error('RENDERER: Erro no logout:', error);
+          console.error('RENDERER (ESM): Erro no logout:', error);
           if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro no logout: ${error.message}`;
         }
       });
     } else {
-        console.warn("RENDERER: headerLogoutButton não encontrado no DOM.");
+        console.warn("RENDERER (ESM): headerLogoutButton não encontrado no DOM.");
     }
 }
 
-async function setupUserSession(uid) {
+async function setupUserSession(uid, userEmail) {
+    if (!firebaseServiceInstance) {
+        console.error("RENDERER (ESM): FirebaseService não instanciado antes de setupUserSession.");
+        return;
+    }
+
+    // Configura UI básica do usuário
+    if (appHeader) appHeader.classList.remove('hidden');
+    if (headerUserEmail) headerUserEmail.textContent = userEmail;
+    if (userInfoDebug) userInfoDebug.innerHTML = `UID: ${uid}<br>Email: ${userEmail}`;
+    if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = 'Obtendo informações da empresa...';
+    if (headerEmpresaNome) headerEmpresaNome.textContent = 'Carregando...';
+
+    // Configura listeners de IPC do preload
     if (window.electronAPI) {
         if (window.electronAPI.onVideoProcessingResult && !cleanupVideoProcessingResultListener) {
             cleanupVideoProcessingResultListener = window.electronAPI.onVideoProcessingResult(handleVideoProcessingResult);
@@ -192,97 +179,99 @@ async function setupUserSession(uid) {
             cleanupMonitoringStatusListener = window.electronAPI.onMonitoringStatusUpdate(handleMonitoringStatusUpdate);
         }
     } else {
-        console.error("RENDERER: electronAPI não está disponível para registrar listeners IPC.");
+        console.error("RENDERER (ESM): electronAPI não está disponível para registrar listeners IPC.");
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = "Erro crítico: API de comunicação indisponível.";
-        return;
+        return; // Não prosseguir sem API
     }
     await setupFirestoreMonitoring(uid);
 }
 
 async function setupFirestoreMonitoring(uid) {
+  if (!firebaseServiceInstance) {
+    console.error("RENDERER_FIRESTORE (ESM): FirebaseService não instanciado.");
+    if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro: Serviço de banco de dados não pronto.`;
+    return;
+  }
+
   if (unsubscribeFirestoreListener) {
-    console.log('RENDERER_FIRESTORE: Cancelando listener anterior do Firestore.');
+    console.log('RENDERER_FIRESTORE (ESM): Cancelando listener anterior do Firestore.');
     unsubscribeFirestoreListener();
     unsubscribeFirestoreListener = null;
   }
 
   try {
-    if (!fbDb) {
-        console.error("RENDERER_FIRESTORE: fbDb não está inicializado.");
-        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro: Serviço de banco de dados não pronto.`;
-        return;
-    }
-    const userDocRef = fbDb.collection('usuarios').doc(uid);
-    const userDocSnap = await userDocRef.get();
+    const userDocSnap = await firebaseServiceInstance.getUserDocument(uid);
 
-    if (!userDocSnap.exists) {
-      console.error(`RENDERER_FIRESTORE: Documento do usuário ${uid} não encontrado.`);
+    if (!userDocSnap.exists) { // No SDK compat, é userDocSnap.exists (propriedade)
+      console.error(`RENDERER_FIRESTORE (ESM): Documento do usuário ${uid} não encontrado.`);
       if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro: Documento do usuário não encontrado.`;
       if (headerEmpresaNome) headerEmpresaNome.textContent = 'Empresa: Inválida';
       return;
     }
+    const userData = userDocSnap.data();
 
-    empresaAtivaId = userDocSnap.data().empresaAtivaId;
+    empresaAtivaId = userData.empresaAtivaId;
     if (!empresaAtivaId) {
-      console.error(`RENDERER_FIRESTORE: empresaAtivaId não encontrada para usuário ${uid}.`);
+      console.error(`RENDERER_FIRESTORE (ESM): empresaAtivaId não encontrada para usuário ${uid}.`);
       if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro: Empresa ativa não configurada.`;
       if (headerEmpresaNome) headerEmpresaNome.textContent = 'Empresa: Não Config.';
       return;
     }
 
-    const empresaDocRef = fbDb.collection('empresas').doc(empresaAtivaId);
-    const empresaDocSnap = await empresaDocRef.get();
-    if (empresaDocSnap.exists) {
+    const empresaDocSnap = await firebaseServiceInstance.getCompanyDocument(empresaAtivaId);
+    if (empresaDocSnap.exists) { // Propriedade no SDK compat
         nomeEmpresaAtiva = empresaDocSnap.data().nome || empresaAtivaId;
     } else {
         nomeEmpresaAtiva = empresaAtivaId; 
-        console.warn(`RENDERER_FIRESTORE: Documento da empresa ${empresaAtivaId} não encontrado, usando ID como nome.`);
+        console.warn(`RENDERER_FIRESTORE (ESM): Documento da empresa ${empresaAtivaId} não encontrado, usando ID como nome.`);
     }
     if (headerEmpresaNome) headerEmpresaNome.textContent = `${nomeEmpresaAtiva}`;
     if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Monitorando projetos para ${nomeEmpresaAtiva}.`;
 
-    const projetosShortsRef = fbDb.collection('empresas').doc(empresaAtivaId).collection('projetos_shorts');
-    const q = projetosShortsRef.where("status", "==", "downloading");
+    // O retorno de listenToDownloadingProjects é a função de unsubscribe
+    unsubscribeFirestoreListener = firebaseServiceInstance.listenToDownloadingProjects(
+        empresaAtivaId,
+        (querySnapshot) => { // Success callback
+            // console.log(`RENDERER_FIRESTORE_SNAPSHOT (ESM): ${querySnapshot.docs.length} projetos 'downloading'.`); // Verboso
+            let newItemsAddedToQueue = false;
+            querySnapshot.forEach((docSnapshot) => {
+                const projetoData = docSnapshot.data();
+                const projetoId = docSnapshot.id;
 
-    unsubscribeFirestoreListener = q.onSnapshot((querySnapshot) => {
-        console.log(`RENDERER_FIRESTORE_SNAPSHOT: ${querySnapshot.docs.length} projetos com status 'downloading'.`);
-        let newItemsAddedToQueue = false;
-        querySnapshot.forEach((docSnapshot) => {
-            const projetoData = docSnapshot.data();
-            const projetoId = docSnapshot.id;
+                const isAlreadyQueued = videoProcessingQueue.some(p => p.projetoId === projetoId);
+                // currentVideoProcessingDisplay é global e atualizado por updateCurrentProcessingUI
+                const currentProcessingProjectId = currentVideoProcessingDisplay ? currentVideoProcessingDisplay.dataset.projetoId : null;
+                const isCurrentlyBeingProcessed = currentProcessingProjectId === projetoId;
 
-            const isAlreadyQueued = videoProcessingQueue.some(p => p.projetoId === projetoId);
-            const currentProcessingItem = currentVideoProcessingDisplay.dataset.projetoId;
-            const isCurrentlyBeingProcessed = currentProcessingItem === projetoId;
+                if (!isAlreadyQueued && !isCurrentlyBeingProcessed) {
+                    console.log(`RENDERER_FIRESTORE (ESM): Adicionando projeto ${projetoId} à fila.`);
+                    videoProcessingQueue.push({
+                        youtubeUrl: projetoData.youtubeUrl,
+                        empresaId: empresaAtivaId,
+                        projetoId: projetoId,
+                        originalStatus: projetoData.status 
+                    });
+                    newItemsAddedToQueue = true;
+                }
+            });
 
-            if (!isAlreadyQueued && !isCurrentlyBeingProcessed) {
-                console.log(`RENDERER_FIRESTORE: Adicionando projeto ${projetoId} à fila.`);
-                videoProcessingQueue.push({
-                    youtubeUrl: projetoData.youtubeUrl,
-                    empresaId: empresaAtivaId,
-                    projetoId: projetoId,
-                    originalStatus: projetoData.status 
-                });
-                newItemsAddedToQueue = true;
+            if (newItemsAddedToQueue) {
+                updateVideoQueueUI();
             }
-        });
-
-        if (newItemsAddedToQueue) {
-            updateVideoQueueUI();
+            processNextVideoInQueue(); 
+            
+            if (videoProcessingQueue.length === 0 && !isCurrentlyProcessingVideo) {
+                 if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
+            }
+        }, 
+        (error) => { // Error callback for the listener
+            console.error(`RENDERER_FIRESTORE_SNAPSHOT (ESM): Erro no listener:`, error);
+            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro ao monitorar Firestore: ${error.message}`;
         }
-        processNextVideoInQueue(); 
-        
-        if (videoProcessingQueue.length === 0 && !isCurrentlyProcessingVideo) {
-             if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
-        }
-
-    }, (error) => {
-      console.error(`RENDERER_FIRESTORE_SNAPSHOT: Erro no listener:`, error);
-      if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro ao monitorar Firestore: ${error.message}`;
-    });
+    );
 
   } catch (error) {
-    console.error(`RENDERER_FIRESTORE: Erro crítico ao configurar monitoramento:`, error);
+    console.error(`RENDERER_FIRESTORE (ESM): Erro crítico ao configurar monitoramento:`, error);
     if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Erro crítico no monitoramento: ${error.message}`;
     if (headerEmpresaNome) headerEmpresaNome.textContent = 'Empresa: Erro';
   }
@@ -290,8 +279,11 @@ async function setupFirestoreMonitoring(uid) {
 
 function processNextVideoInQueue() {
     if (isCurrentlyProcessingVideo || videoProcessingQueue.length === 0) {
-        if (videoProcessingQueue.length === 0 && !isCurrentlyProcessingVideo) {
-            updateVideoQueueUI(); 
+        if (videoProcessingQueue.length === 0 && !isCurrentlyProcessingVideo && monitoringStatusDisplay) {
+            // Apenas atualiza se não houver mensagem mais específica
+            // if (!monitoringStatusDisplay.textContent.startsWith("Projeto")) {
+            //     monitoringStatusDisplay.textContent = `Aguardando projetos (${nomeEmpresaAtiva}).`;
+            // }
         }
         return;
     }
@@ -300,15 +292,15 @@ function processNextVideoInQueue() {
     const projeto = videoProcessingQueue.shift(); 
 
     updateCurrentProcessingUI(projeto);
-    updateVideoQueueUI();
-    if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Iniciando processamento: ${projeto.projetoId}...`;
+    updateVideoQueueUI(); // Atualiza a contagem da fila
+    // if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Iniciando processamento: ${projeto.projetoId}...`; // Mensagem do main é melhor
 
     if (window.electronAPI && window.electronAPI.requestVideoProcessing) {
         window.electronAPI.requestVideoProcessing(projeto);
     } else {
-        console.error("RENDERER: electronAPI.requestVideoProcessing não disponível!");
+        console.error("RENDERER (ESM): electronAPI.requestVideoProcessing não disponível!");
         if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Falha ao iniciar ${projeto.projetoId}: API indisponível.`;
-        videoProcessingQueue.unshift(projeto);
+        videoProcessingQueue.unshift(projeto); // Devolve para a fila
         isCurrentlyProcessingVideo = false;
         updateCurrentProcessingUI(null);
         updateVideoQueueUI();
@@ -316,79 +308,63 @@ function processNextVideoInQueue() {
 }
 
 function handleVideoProcessingResult(result) {
-    console.log('RENDERER: Resultado do processamento de vídeo recebido:', result);
-    isCurrentlyProcessingVideo = false;
-    const { empresaId, projetoId, success, error, minioPath } = result;
-
-    updateCurrentProcessingUI(null); 
-
-    if (success) {
-      if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId} processado! Atualizando Firestore...`;
-      try {
-        if (!fbDb) {
-            console.error("RENDERER: fbDb não inicializado ao tentar atualizar Firestore.");
-            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Erro crítico - DB não pronto.`;
-            return;
-        }
-        const projetoDocRef = fbDb.collection('empresas').doc(empresaId).collection('projetos_shorts').doc(projetoId);
-        projetoDocRef.update({
-          status: "downloaded", 
-          minioPath: minioPath,
-          processedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          errorMessage: firebase.firestore.FieldValue.delete() 
-        }).then(() => {
-            console.log(`RENDERER: Projeto ${projetoId} atualizado para 'downloaded'.`);
-            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Sucesso!`;
-        }).catch(dbError => {
-            console.error(`RENDERER: Erro ao atualizar projeto ${projetoId} para 'downloaded':`, dbError);
-            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Erro ao atualizar status pós-sucesso.`;
-        });
-      } catch (dbErrorOuter) { 
-        console.error(`RENDERER: Erro síncrono ao tentar atualizar projeto ${projetoId}:`, dbErrorOuter);
-      }
-    } else {
-      console.error(`RENDERER: Falha no processamento do projeto ${projetoId}:`, error);
-      if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Falha - ${error}. Atualizando Firestore...`;
-      try {
-        if (!fbDb) {
-            console.error("RENDERER: fbDb não inicializado ao tentar atualizar Firestore.");
-            if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Erro crítico - DB não pronto.`;
-            return;
-        }
-        const projetoDocRef = fbDb.collection('empresas').doc(empresaId).collection('projetos_shorts').doc(projetoId);
-        projetoDocRef.update({
-          status: "falha_processamento",
-          errorMessage: String(error || 'Erro desconhecido'), 
-          processedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }).then(() => {
-            console.log(`RENDERER: Projeto ${projetoId} atualizado para 'falha_processamento'.`);
-        }).catch(dbError => {
-            console.error(`RENDERER: Erro ao atualizar projeto ${projetoId} para 'falha_processamento':`, dbError);
-        });
-      } catch (dbErrorOuter) {
-        console.error(`RENDERER: Erro síncrono ao tentar atualizar projeto ${projetoId} para falha:`, dbErrorOuter);
-      }
+    // console.log('RENDERER (ESM): Resultado do processamento de vídeo recebido:', result); // Verboso
+    if (!firebaseServiceInstance) {
+        console.error("RENDERER (ESM) (handleVideoProcessingResult): FirebaseService não instanciado.");
+        isCurrentlyProcessingVideo = false;
+        updateCurrentProcessingUI(null);
+        if (monitoringStatusDisplay && result.projetoId) monitoringStatusDisplay.textContent = `Projeto ${result.projetoId}: Falha crítica - serviço DB indisponível.`;
+        processNextVideoInQueue(); // Tenta o próximo, mas o atual não será atualizado no DB
+        return;
     }
-    processNextVideoInQueue(); 
+
+    isCurrentlyProcessingVideo = false;
+    const { empresaId, projetoId, success, error: processError, minioPath } = result;
+
+    updateCurrentProcessingUI(null); // Limpa a UI do item em processamento
+
+    const statusUpdate = success ? 
+        { status: "downloaded", minioPath: minioPath, errorMessage: null } : // Passa null para que seja deletado
+        { status: "falha_processamento", errorMessage: processError || 'Erro desconhecido no processamento' };
+    
+    const logAction = success ? "'downloaded'" : "'falha_processamento'";
+    const friendlyStatusMsg = success ? "Sucesso!" : `Falha - ${String(statusUpdate.errorMessage || '').substring(0, 50)}...`;
+
+    if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: ${friendlyStatusMsg} Atualizando Firestore...`;
+
+    firebaseServiceInstance.updateProjectShortStatus(empresaId, projetoId, statusUpdate)
+    .then(() => {
+        console.log(`RENDERER (ESM): Projeto ${projetoId} atualizado para ${logAction}.`);
+        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: ${friendlyStatusMsg}`;
+    }).catch(dbError => {
+        console.error(`RENDERER (ESM): Erro ao atualizar projeto ${projetoId} para ${logAction}:`, dbError);
+        if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Projeto ${projetoId}: Erro ao atualizar status no DB (${friendlyStatusMsg}).`;
+    }).finally(() => {
+        processNextVideoInQueue(); // Chama o próximo independentemente do resultado do update no DB
+    });
 }
 
 function handleMonitoringStatusUpdate(statusMsg) {
-    const currentProcessingItemDiv = document.getElementById('current-video-processing'); // pode ser currentVideoProcessingDisplay
+    const currentProcessingItemDiv = document.getElementById('current-video-processing');
     if (!currentProcessingItemDiv) return;
 
     const projetoIdMatch = statusMsg.match(/\[PROJETO (.*?)\]/);
+    // Se a mensagem não for de um projeto específico, atualiza o status geral se nada estiver processando
     if (!projetoIdMatch) {
-        if (!isCurrentlyProcessingVideo) {
-            // if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = statusMsg; 
+        if (!isCurrentlyProcessingVideo && monitoringStatusDisplay) {
+            // Evita sobrescrever mensagens de erro ou sucesso de processamento de vídeo
+            if (!monitoringStatusDisplay.textContent.includes("Sucesso!") && !monitoringStatusDisplay.textContent.includes("Falha -")) {
+                 monitoringStatusDisplay.textContent = statusMsg;
+            }
         }
         return;
     }
     const projetoIdFromMsg = projetoIdMatch[1];
-    const currentProcessedProjectId = currentVideoProcessingDisplay.dataset.projetoId;
+    const currentProcessedProjectId = currentProcessingItemDiv.dataset.projetoId;
 
-    if (projetoIdFromMsg === currentProcessedProjectId) {
-        const progressBar = currentVideoProcessingDisplay.querySelector(`#progress-bar-${projetoIdFromMsg}`);
-        const progressText = currentVideoProcessingDisplay.querySelector(`#progress-text-${projetoIdFromMsg}`);
+    if (projetoIdFromMsg === currentProcessedProjectId) { // A mensagem é para o vídeo atual
+        const progressBar = currentProcessingItemDiv.querySelector(`#progress-bar-${projetoIdFromMsg}`);
+        const progressText = currentProcessingItemDiv.querySelector(`#progress-text-${projetoIdFromMsg}`);
 
         if (progressBar && progressText) {
             const percentMatch = statusMsg.match(/Download: (\d+\.?\d*)%/);
@@ -399,21 +375,35 @@ function handleMonitoringStatusUpdate(statusMsg) {
                 const percent = parseFloat(percentMatch[1]);
                 progressBar.style.width = `${percent}%`;
                 progressText.textContent = `${percent.toFixed(0)}% (${downloadedMatch[1]}MB / ${downloadedMatch[2]}MB)`;
-            } else if (downloadedOnlyMatch) {
+            } else if (downloadedOnlyMatch) { // Progresso sem total
                 progressText.textContent = `(${downloadedOnlyMatch[1]}MB baixados)`;
+                 progressBar.style.width = `100%`; // Ou um estilo diferente para progresso indeterminado
+                 progressBar.classList.add('bg-blue-500'); // Exemplo: cor diferente
+                 progressBar.classList.remove('bg-green-500');
             } else if (statusMsg.includes("Iniciando download...")) {
                  progressBar.style.width = `0%`;
                  progressText.textContent = "Iniciando download...";
-            } else if (statusMsg.includes("Download concluído. Upload para Minio...")) { // Corrigido aqui (era "Iniciando upload para o Minio")
+                 progressBar.classList.add('bg-green-500');
+                 progressBar.classList.remove('bg-blue-500');
+            } else if (statusMsg.includes("Download concluído. Upload para Minio...")) {
                  progressBar.style.width = `100%`; 
                  progressText.textContent = "Upload para Minio...";
+                 progressBar.classList.add('bg-green-500');
+                 progressBar.classList.remove('bg-blue-500');
             }
         }
+    } else if (isCurrentlyProcessingVideo && monitoringStatusDisplay) {
+        // A mensagem é de um projeto, mas não o que está "em processamento"
+        // Pode ser útil logar isso, mas não necessariamente mudar o status principal da UI
+        // console.log(`RENDERER (ESM): Status recebido para ${projetoIdFromMsg}, mas ${currentProcessedProjectId} está processando.`);
+    } else if (!isCurrentlyProcessingVideo && monitoringStatusDisplay) {
+        // Mensagem de projeto, mas nada processando (pode ser uma mensagem de erro do main não relacionada a um item específico)
+         monitoringStatusDisplay.textContent = statusMsg;
     }
 }
 
 function updateVideoQueueUI() {
-    if (!videoQueueListDisplay) return; // Checa se o elemento existe
+    if (!videoQueueListDisplay) return;
     videoQueueListDisplay.innerHTML = ''; 
     if (queueCountSpan) queueCountSpan.textContent = videoProcessingQueue.length;
 
@@ -429,7 +419,7 @@ function updateVideoQueueUI() {
                     <span class="text-xs text-slate-400 whitespace-nowrap">Aguardando</span>
                 </div>
                 <p class="text-xs text-slate-500 mt-1 truncate" title="${video.youtubeUrl}">
-                    ${video.youtubeUrl}
+                    ${video.youtubeUrl.substring(0,60)}${video.youtubeUrl.length > 60 ? '...' : ''}
                 </p>
             `;
             videoQueueListDisplay.appendChild(itemDiv);
@@ -438,7 +428,7 @@ function updateVideoQueueUI() {
 }
 
 function updateCurrentProcessingUI(projeto) {
-    if (!currentVideoProcessingDisplay) return; // Checa se o elemento existe
+    if (!currentVideoProcessingDisplay) return;
     currentVideoProcessingDisplay.innerHTML = ''; 
     if (projeto) {
         currentVideoProcessingDisplay.dataset.projetoId = projeto.projetoId; 
@@ -452,7 +442,7 @@ function updateCurrentProcessingUI(projeto) {
                 </svg>
                 <span class="font-semibold text-green-700 text-sm truncate" title="${projeto.projetoId}">Processando ID: ${projeto.projetoId}</span>
             </div>
-            <p class="text-xs text-green-500 truncate mb-2" title="${projeto.youtubeUrl}">${projeto.youtubeUrl}</p>
+            <p class="text-xs text-green-500 truncate mb-2" title="${projeto.youtubeUrl}">${projeto.youtubeUrl.substring(0,60)}${projeto.youtubeUrl.length > 60 ? '...' : ''}</p>
             <div class="w-full bg-slate-200 rounded-full h-2.5 dark:bg-slate-700">
                 <div id="progress-bar-${projeto.projetoId}" class="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-linear" style="width: 0%"></div>
             </div>

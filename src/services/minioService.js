@@ -1,76 +1,103 @@
 // src/services/minioService.js
-const Minio = require('minio');
-const fs = require('fs');
-const path = require('path'); // Para pegar a extensão e nome do arquivo
-const mime = require('mime-types'); // Para detectar o Content-Type
+import fs from 'fs'; // Não é usado diretamente aqui, mas poderia ser para ler stream
+import path from 'path'; // Usado para basename
+import mime from 'mime-types'; // Geralmente funciona bem com import ESM
+
+// Para a biblioteca 'minio':
+// Verifique a documentação da versão que você está usando para a melhor forma de importação ESM.
+// Muitas bibliotecas oferecem um export default ou nomeado.
+// Tentativa 1: Importação nomeada (comum para classes de SDKs)
+// import { Client as MinioClient } from 'minio';
+// Tentativa 2: Importação default
+// import Minio from 'minio';
+// Tentativa 3: Fallback para createRequire se as acima falharem
+let MinioClient; // Variável para armazenar a classe Client
+try {
+  // Tentar importar como se fosse um módulo ES com exportações nomeadas ou default
+  const minioModule = await import('minio');
+  if (minioModule.Client) {
+    MinioClient = minioModule.Client;
+  } else if (minioModule.default && minioModule.default.Client) {
+    MinioClient = minioModule.default.Client;
+  } else if (minioModule.default) { // Se o default for a própria classe Client
+     MinioClient = minioModule.default;
+  } else {
+    // Se nenhuma das opções acima funcionar, tentar createRequire
+    throw new Error('Exportação Minio.Client não encontrada diretamente.');
+  }
+} catch (e) {
+  console.warn('[MinioService (ESM)] Falha ao importar "minio" como ESM nativo, tentando com createRequire...');
+  try {
+    const { createRequire } = await import('module');
+    const require = createRequire(import.meta.url);
+    const MinioLib = require('minio'); // Isso deve retornar o objeto que tem Client
+    MinioClient = MinioLib.Client;
+    if (!MinioClient) throw new Error('Minio.Client não encontrado via createRequire.');
+  } catch (e2) {
+    console.error('[MinioService (ESM)] Falha crítica ao importar a lib "minio". Verifique a instalação.', e2);
+    // Lançar erro ou definir MinioClient como algo que falhará graciosamente
+    throw new Error('Minio SDK não pôde ser carregado.');
+  }
+}
+
 
 class MinioService {
   constructor(config) {
     this.config = config;
+    this.onLog = config.onLog || console.log; // Garante que onLog exista
+
+    if (!MinioClient) {
+      const errorMessage = "[MinioService (ESM)] Classe Minio.Client não foi carregada. O serviço não pode operar.";
+      this.onLog(errorMessage);
+      throw new Error(errorMessage);
+    }
+
     try {
-      this.client = new Minio.Client({
+      this.client = new MinioClient({ // Usa a variável MinioClient
         endPoint: config.endpoint,
-        port: config.port || (config.useSSL ? 443 : 80), // Porta padrão baseada em SSL
+        port: config.port || (config.useSSL ? 443 : 80),
         useSSL: config.useSSL || false,
         accessKey: config.accessKey,
         secretKey: config.secretKey,
       });
       this.bucketName = config.bucketName;
-      this.onLog = config.onLog || console.log;
-      this.onLog('[MinioService] Cliente Minio inicializado.');
+      this.onLog('[MinioService (ESM)] Cliente Minio inicializado.');
     } catch (error) {
-      this.onLog(`[MinioService] Erro ao inicializar cliente Minio: ${error.message}`);
-      throw error; // Re-throw para que o chamador saiba que falhou
+      this.onLog(`[MinioService (ESM)] Erro ao inicializar cliente Minio: ${error.message}`);
+      throw error;
     }
   }
 
-  /**
-   * Faz upload de um arquivo para o Minio.
-   * @param {string} objectName - O nome completo do objeto no bucket (ex: 'shorts/projeto123/video.mp4').
-   * @param {string} filePath - O caminho local para o arquivo a ser enviado.
-   * @returns {Promise<string>} - Promessa que resolve com o objectName em caso de sucesso.
-   */
   async uploadFile(objectName, filePath) {
-    this.onLog(`[MinioService] Iniciando upload de ${filePath} para ${this.bucketName}/${objectName}`);
+    this.onLog(`[MinioService (ESM)] Upload de ${path.basename(filePath)} para ${this.bucketName}/${objectName}`);
 
     try {
-      // Detectar o Content-Type baseado na extensão do arquivo
       const contentType = mime.lookup(filePath) || 'application/octet-stream';
       const metaData = {
         'Content-Type': contentType,
-        // Você pode adicionar mais metadados aqui se precisar
-        // 'X-Amz-Meta-Testing': 1234,
       };
 
-      this.onLog(`[MinioService] Metadados para upload: ${JSON.stringify(metaData)}`);
+      // this.onLog(`[MinioService (ESM)] Metadados: ${JSON.stringify(metaData)}`); // Verboso
 
-      // Verifica se o bucket existe (opcional, mas bom para depuração)
-      // Em produção, você geralmente garante que o bucket já existe.
-      const bucketExists = await this.client.bucketExists(this.bucketName);
-      if (!bucketExists) {
-        this.onLog(`[MinioService] Bucket ${this.bucketName} não existe! Criando bucket...`);
-        // await this.client.makeBucket(this.bucketName, 'us-east-1'); // Região é opcional para Minio standalone
-        // Para este caso, vamos assumir que o bucket já existe, pois criar buckets dinamicamente pode não ser o desejado.
-        // Se precisar criar, descomente a linha acima, mas com cuidado.
-        // Por agora, vamos lançar um erro se não existir.
-        throw new Error(`Bucket ${this.bucketName} não existe.`);
-      } else {
-          this.onLog(`[MinioService] Bucket ${this.bucketName} existe.`);
-      }
+      // Não é estritamente necessário verificar bucketExists em cada upload em produção
+      // (assume-se que o bucket existe), mas pode ser útil para debug.
+      // const bucketExists = await this.client.bucketExists(this.bucketName);
+      // if (!bucketExists) {
+      //   this.onLog(`[MinioService (ESM)] Bucket ${this.bucketName} não existe!`);
+      //   throw new Error(`Bucket ${this.bucketName} não existe.`);
+      // }
 
-
-      // Faz o upload do arquivo
-      // O SDK do Minio `fPutObject` retorna uma Promise com informações do upload (etag, versionId)
+      // fPutObject é o método correto para upload de arquivos
       const result = await this.client.fPutObject(this.bucketName, objectName, filePath, metaData);
-      this.onLog(`[MinioService] Upload de ${filePath} para ${this.bucketName}/${objectName} concluído. Etag: ${result.etag}`);
-      return objectName; // Retorna o nome do objeto para ser usado como minioPath
+      this.onLog(`[MinioService (ESM)] Upload de ${path.basename(filePath)} concluído. Etag: ${result.etag}`);
+      return objectName;
 
     } catch (error) {
-      this.onLog(`[MinioService] Erro durante o upload para Minio: ${error.message}`);
-      this.onLog(`[MinioService] Detalhes do erro: ${JSON.stringify(error)}`);
-      throw error; // Re-throw para que o chamador saiba que falhou
+      this.onLog(`[MinioService (ESM)] Erro durante o upload para Minio: ${error.message}`);
+      // this.onLog(`[MinioService (ESM)] Detalhes do erro: ${JSON.stringify(error)}`); // Pode ser muito grande
+      throw error;
     }
   }
 }
 
-module.exports = MinioService;
+export default MinioService;

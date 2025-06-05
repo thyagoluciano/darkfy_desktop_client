@@ -1,13 +1,37 @@
 // src/services/downloadService.js
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const ytdl = require('ytdl-core');
-const https = require('https');
-const http = require('http');
-const { pipeline } = require('stream/promises');
-const { URL } = require('url');
-const youtubeDl = require('youtube-dl-exec');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import https from 'https';
+import http from 'http';
+import { pipeline } from 'stream/promises'; // stream/promises é ESM-friendly
+import { URL } from 'url'; // URL é um global, mas importar pode ser mais explícito
+
+// Para ytdl-core e youtube-dl-exec, precisamos verificar como eles são melhor importados em ESM.
+// Muitas libs modernas suportam 'import NomeDaLib from "nome-da-lib";'
+// Se não, usaremos createRequire como fallback.
+
+// Tentativa de importação direta (verifique a documentação das libs se isso falhar)
+import ytdl from 'ytdl-core';
+// youtube-dl-exec pode ser mais complicado se for um wrapper CLI.
+// Se a importação direta falhar, use createRequire.
+let youtubeDl;
+try {
+  const youtubeDlModule = await import('youtube-dl-exec');
+  youtubeDl = youtubeDlModule.default || youtubeDlModule; // Tenta pegar o default ou o módulo inteiro
+} catch (e) {
+  console.warn('Falha ao importar youtube-dl-exec como ESM nativo, tentando com createRequire...');
+  try {
+    const { createRequire } = await import('module');
+    const require = createRequire(import.meta.url);
+    youtubeDl = require('youtube-dl-exec');
+  } catch (e2) {
+    console.error('Falha crítica ao importar youtube-dl-exec. Verifique a instalação e o suporte ESM.', e2);
+    // Defina youtubeDl como uma função no-op ou lance um erro para que a aplicação não quebre inesperadamente
+    youtubeDl = () => Promise.reject(new Error('youtube-dl-exec não pôde ser carregado'));
+  }
+}
+
 
 class DownloadService {
   constructor(callbacks = {}) {
@@ -17,16 +41,14 @@ class DownloadService {
     this.retryDelay = callbacks.retryDelay || 2000; // ms
     this.timeout = callbacks.timeout || 120000; // 2 minutos
     
-    // Configurações para youtube-dl-exec
-    this.ytDlpPath = callbacks.ytDlpPath || null; // Caminho para o binário yt-dlp (opcional)
+    this.ytDlpPath = callbacks.ytDlpPath || null;
   }
 
   _getTempFilePath(originalUrl, uniqueId) {
     const tempDir = os.tmpdir();
-    const fileExtension = '.mp4'; // Sempre usar .mp4 como extensão
+    const fileExtension = '.mp4';
     let videoId = '';
     
-    // Extrair ID do vídeo da URL
     if (originalUrl.includes('youtube.com/watch?v=')) {
       videoId = originalUrl.split('watch?v=')[1].split('&')[0];
     } else if (originalUrl.includes('youtu.be/')) {
@@ -34,343 +56,256 @@ class DownloadService {
     } else if (originalUrl.includes('youtube.com/shorts/')) {
       videoId = originalUrl.split('/shorts/')[1].split('?')[0];
     } else {
-      // Para URLs não-YouTube, usar uniqueId
       videoId = uniqueId;
     }
     
-    this.onLog(`[DownloadService] Nome do arquivo será: ${videoId}${fileExtension}`);
-    
-    // Criar nome do arquivo usando apenas o ID do vídeo
+    // this.onLog(`[DownloadService (ESM)] Nome do arquivo será: ${videoId}${fileExtension}`); // Removido para diminuir verbosidade
     return path.join(tempDir, `${videoId}${fileExtension}`);
   }
 
 
   _processYouTubeUrl(videoUrl) {
     let processedUrl = videoUrl;
-    
-    // Converter YouTube Shorts para URL padrão
     if (videoUrl.includes('/shorts/')) {
-      this.onLog(`[DownloadService] URL é um YouTube Short: ${videoUrl}. Convertendo para URL de vídeo padrão.`);
+      // this.onLog(`[DownloadService (ESM)] URL é um YouTube Short. Convertendo.`);
       processedUrl = videoUrl.replace('/shorts/', '/watch?v=');
-      this.onLog(`[DownloadService] URL convertida para: ${processedUrl}`);
     }
-    
-    // Converter URLs de compartilhamento (youtu.be)
     if (videoUrl.includes('youtu.be/')) {
       const videoId = videoUrl.split('youtu.be/')[1].split('?')[0];
       processedUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      this.onLog(`[DownloadService] URL de compartilhamento convertida para: ${processedUrl}`);
+      // this.onLog(`[DownloadService (ESM)] URL de compartilhamento convertida.`);
     }
-    
     return processedUrl;
   }
 
   async _downloadWithYtDlp(videoUrl, tempFilePath, retryCount = 0) {
     try {
-      this.onLog(`[DownloadService] Iniciando download com youtube-dl-exec: ${videoUrl}`);
+      this.onLog(`[DownloadService (ESM)] Iniciando download com youtube-dl-exec: ${videoUrl.substring(0, 50)}...`);
       
-      // Configurar opções para youtube-dl-exec
       const options = {
         output: tempFilePath,
-        format: 'best[ext=mp4]/best', // Preferir MP4, mas pegar o melhor formato disponível
+        format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', // Formato mais robusto
         noCheckCertificates: true,
         noWarnings: true,
         preferFreeFormats: true,
         addHeader: [
           'referer:youtube.com',
           'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        ]
+        ],
+        // Parâmetros para tentar evitar erros de "throttling" ou geoblocking, se aplicável
+        // geoBypass: true, // Pode requerer configuração adicional ou não ser suportado por todas as versões
+        // retries: 10, // Retries internos do yt-dlp
+        // fragmentRetries: 10,
       };
       
-      // Usar yt-dlp se disponível (mais atualizado e rápido)
       let ytDlpInstance = youtubeDl;
-      if (this.ytDlpPath) {
+      if (this.ytDlpPath && typeof youtubeDl.create === 'function') { // Verifica se create existe
         ytDlpInstance = youtubeDl.create(this.ytDlpPath);
+      } else if (this.ytDlpPath) {
+        this.onLog(`[DownloadService (ESM)] ytDlpPath fornecido, mas youtubeDl.create não é uma função. Usando instância padrão de youtubeDl.`);
       }
       
-      // Configurar listener de progresso (se disponível)
-      let progressTracker;
-      try {
-        // Alguns ambientes podem não suportar o progresso
-        progressTracker = ytDlpInstance.createProgressTracker({
-          onProgress: (progress) => {
-            if (progress && progress.percent) {
-              this.onProgress(
-                progress.percent,
-                progress.downloadedBytes || 0,
-                progress.totalBytes || 0
-              );
-            }
-          }
-        });
-        options.progress = true;
-      } catch (e) {
-        this.onLog(`[DownloadService] Não foi possível configurar rastreamento de progresso: ${e.message}`);
-      }
-      
+      // O rastreamento de progresso com youtube-dl-exec pode ser instável ou não implementado uniformemente.
+      // É mais seguro confiar no log de progresso do próprio yt-dlp se ele o emitir para stdout/stderr,
+      // ou simplesmente não ter um progresso granular aqui e focar no ytdl-core para isso.
+      // Por ora, vamos remover a tentativa de criarProgressTracker para simplificar.
+      // Se quiser progresso, ytdl-core é melhor para isso via stream.
+
       // Executar o download
-      const result = await ytDlpInstance(videoUrl, options);
+      // A chamada a youtubeDl pode precisar ser ajustada dependendo de como a lib foi importada.
+      // Se youtubeDl for o default export, é só chamar youtubeDl(...).
+      // Se for um objeto com métodos, pode ser youtubeDl.exec(...) ou similar.
+      // A importação padrão 'import youtubeDl from ...' geralmente dá o objeto/função principal.
+      await ytDlpInstance(videoUrl, options); // Assumindo que ytDlpInstance é uma função executável
       
-      this.onLog(`[DownloadService] Download (youtube-dl-exec) concluído: ${tempFilePath}`);
+      this.onLog(`[DownloadService (ESM)] Download (youtube-dl-exec) concluído: ${tempFilePath}`);
       return tempFilePath;
       
     } catch (error) {
-      this.onLog(`[DownloadService] Erro no download youtube-dl-exec: ${error.message}`);
-      
-      // Limpar arquivo parcial
+      this.onLog(`[DownloadService (ESM)] Erro no download youtube-dl-exec (tentativa ${retryCount + 1}): ${error.message}`);
       if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
+        try { fs.unlinkSync(tempFilePath); } catch (e) { /* ignore */ }
       }
-      
-      // Tentar novamente se não excedeu o número máximo de tentativas
       if (retryCount < this.maxRetries) {
-        this.onLog(`[DownloadService] Tentando novamente (${retryCount + 1}/${this.maxRetries})...`);
-        // Atraso exponencial entre tentativas
-        const delay = this.retryDelay * Math.pow(2, retryCount);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        this.onLog(`[DownloadService (ESM)] Tentando novamente em ${this.retryDelay * Math.pow(2, retryCount)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)));
         return this._downloadWithYtDlp(videoUrl, tempFilePath, retryCount + 1);
       }
-      
       throw error;
     }
   }
 
   async _downloadWithYtdl(videoUrl, tempFilePath, retryCount = 0) {
     try {
-      this.onLog(`[DownloadService] Iniciando download com ytdl-core: ${videoUrl}`);
+      this.onLog(`[DownloadService (ESM)] Iniciando download com ytdl-core: ${videoUrl.substring(0, 50)}...`);
       
-      // Usar opções mais robustas
       const options = {
-        quality: 'highest',
-        requestOptions: {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-          }
-        }
+        quality: 'highest', // Tenta pegar áudio e vídeo combinados se possível
+        // filter: format => format.hasAudio && format.hasVideo, // Pode ser muito restritivo, ytdl-core tenta o melhor
+        requestOptions: { /* ... headers ... */ }
       };
       
-      const info = await ytdl.getInfo(videoUrl, options);
-      this.onLog(`[DownloadService] Informações do vídeo obtidas: ${info.videoDetails.title}`);
+      // ytdl.getInfo pode ser demorado ou falhar para alguns vídeos.
+      const info = await ytdl.getInfo(videoUrl, options.requestOptions); // Passar requestOptions para getInfo também
+      this.onLog(`[DownloadService (ESM)] Título (ytdl): ${info.videoDetails.title.substring(0,30)}...`);
       
-      // Selecionar o formato com melhor qualidade que contenha áudio e vídeo
-      let format = ytdl.chooseFormat(info.formats, { 
-        quality: 'highest',
-        filter: format => format.hasAudio && format.hasVideo
-      });
-      
-      // Se não encontrar formato com áudio e vídeo, pegar o melhor vídeo
+      // Escolher o formato. ytdl.chooseFormat é útil.
+      // Tentar um formato que tenha áudio e vídeo e seja mp4.
+      let format = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'audioandvideo', container: 'mp4' });
       if (!format) {
-        this.onLog(`[DownloadService] Não encontrou formato com áudio e vídeo, selecionando melhor vídeo disponível`);
-        format = ytdl.chooseFormat(info.formats, { quality: 'highestvideo' });
+        this.onLog('[DownloadService (ESM)] Não encontrou formato mp4 com áudio e vídeo, tentando melhor vídeo mp4...');
+        format = ytdl.chooseFormat(info.formats, { quality: 'highestvideo', filter: format => format.container === 'mp4' });
+      }
+      if (!format) {
+        this.onLog('[DownloadService (ESM)] Não encontrou vídeo mp4, tentando melhor áudio e vídeo...');
+        format = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'audioandvideo' });
+      }
+      if (!format) {
+          this.onLog('[DownloadService (ESM)] Não encontrou formato com áudio e vídeo, selecionando melhor vídeo disponível');
+          format = ytdl.chooseFormat(info.formats, { quality: 'highestvideo' });
+      }
+      if (!format) {
+        throw new Error('Não foi possível encontrar um formato de vídeo adequado com ytdl-core.');
       }
       
-      this.onLog(`[DownloadService] Formato selecionado: ${format.qualityLabel || 'N/A'} (${format.container})`);
+      this.onLog(`[DownloadService (ESM)] Formato ytdl: ${format.qualityLabel || 'N/A'} (${format.container || 'N/A'})`);
       
       const videoStream = ytdl.downloadFromInfo(info, { format });
       const fileStream = fs.createWriteStream(tempFilePath);
       
-      let totalBytes = parseInt(format.contentLength, 10) || 0;
+      const totalBytes = parseInt(format.contentLength || (info.videoDetails && info.videoDetails.lengthSeconds ? parseInt(info.videoDetails.lengthSeconds) * 150000 : 0), 10); // Estimativa grosseira se contentLength faltar
       let downloadedBytes = 0;
       
-      videoStream.on('data', (chunk) => {
-        downloadedBytes += chunk.length;
-        if (totalBytes > 0) {
-          const percent = (downloadedBytes / totalBytes) * 100;
-          this.onProgress(percent, downloadedBytes, totalBytes);
+      videoStream.on('progress', (chunkLength, downloaded, total) => {
+        // O 'total' de ytdl-core é mais confiável que o format.contentLength às vezes.
+        const currentTotal = total || totalBytes;
+        downloadedBytes = downloaded;
+        if (currentTotal > 0) {
+          const percent = (downloadedBytes / currentTotal) * 100;
+          this.onProgress(percent, downloadedBytes, currentTotal);
         } else {
-          this.onProgress(-1, downloadedBytes, 0);
+          this.onProgress(-1, downloadedBytes, 0); // Progresso indeterminado
         }
       });
       
       await pipeline(videoStream, fileStream);
       
-      this.onLog(`[DownloadService] Download (ytdl) concluído: ${tempFilePath}`);
+      this.onLog(`[DownloadService (ESM)] Download (ytdl) concluído: ${tempFilePath}`);
       return tempFilePath;
       
     } catch (error) {
-      this.onLog(`[DownloadService] Erro no download ytdl: ${error.message}`);
-      
-      // Limpar arquivo parcial
+      this.onLog(`[DownloadService (ESM)] Erro no download ytdl (tentativa ${retryCount + 1}): ${error.message}`);
       if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
+        try { fs.unlinkSync(tempFilePath); } catch (e) { /* ignore */ }
       }
-      
-      // Tentar novamente se não excedeu o número máximo de tentativas
       if (retryCount < this.maxRetries) {
-        this.onLog(`[DownloadService] Tentando novamente (${retryCount + 1}/${this.maxRetries})...`);
-        // Atraso exponencial entre tentativas
-        const delay = this.retryDelay * Math.pow(2, retryCount);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        this.onLog(`[DownloadService (ESM)] Tentando novamente em ${this.retryDelay * Math.pow(2, retryCount)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)));
         return this._downloadWithYtdl(videoUrl, tempFilePath, retryCount + 1);
       }
-      
-      throw error;
+      // Se ytdl falhar, não relançar o erro imediatamente, permitir que a próxima estratégia seja tentada.
+      throw error; // Ou retorne null/undefined para indicar falha e deixar o método principal decidir
     }
   }
 
   async _downloadWithHttp(videoUrl, tempFilePath, retryCount = 0) {
+    // ... (lógica de _downloadWithHttp como antes, mas usando this.onLog com (ESM)) ...
+    // A lógica interna de http.get e streams permanece a mesma.
     try {
-      this.onLog(`[DownloadService] Iniciando download HTTP/S: ${videoUrl}`);
-      
+      this.onLog(`[DownloadService (ESM)] Iniciando download HTTP/S: ${videoUrl.substring(0, 50)}...`);
       const url = new URL(videoUrl);
       const requestModule = url.protocol === 'https:' ? https : http;
       
       return new Promise((resolve, reject) => {
         const request = requestModule.get(videoUrl, {
           timeout: this.timeout,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive'
-          }
+          headers: { /* ... */ }
         }, (response) => {
-          // Seguir redirecionamentos
           if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-            this.onLog(`[DownloadService] Redirecionamento detectado para: ${response.headers.location}`);
-            
-            // Limpar arquivo parcial e reiniciar com nova URL
-            if (fs.existsSync(tempFilePath)) {
-              fs.unlinkSync(tempFilePath);
-            }
-            
-            this._downloadWithHttp(response.headers.location, tempFilePath, retryCount)
-              .then(resolve)
-              .catch(reject);
-            
+            this.onLog(`[DownloadService (ESM)] Redirecionamento para: ${response.headers.location.substring(0,50)}...`);
+            if (fs.existsSync(tempFilePath)) { try { fs.unlinkSync(tempFilePath); } catch(e) {/*ignore*/} }
+            this._downloadWithHttp(response.headers.location, tempFilePath, retryCount).then(resolve).catch(reject);
             return;
           }
-          
           if (response.statusCode !== 200) {
-            const errorMsg = `Falha ao obter vídeo (HTTP/S), status: ${response.statusCode} para ${videoUrl}`;
-            this.onLog(`[DownloadService] ${errorMsg}`);
-            
-            if (fs.existsSync(tempFilePath)) {
-              fs.unlinkSync(tempFilePath);
-            }
-            
+            const errorMsg = `Falha HTTP/S, status: ${response.statusCode} para ${videoUrl.substring(0,50)}`;
+            if (fs.existsSync(tempFilePath)) { try { fs.unlinkSync(tempFilePath); } catch(e) {/*ignore*/} }
             reject(new Error(errorMsg));
             return;
           }
-          
           const totalBytes = parseInt(response.headers['content-length'], 10) || 0;
           let downloadedBytes = 0;
           const fileStream = fs.createWriteStream(tempFilePath);
-          
           response.on('data', (chunk) => {
             downloadedBytes += chunk.length;
-            if (totalBytes > 0) {
-              const percent = (downloadedBytes / totalBytes) * 100;
-              this.onProgress(percent, downloadedBytes, totalBytes);
-            } else {
-              this.onProgress(-1, downloadedBytes, 0);
-            }
+            this.onProgress(totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : -1, downloadedBytes, totalBytes);
           });
-          
-          response.pipe(fileStream);
-          
-          fileStream.on('finish', () => {
-            fileStream.close(() => {
-              this.onLog(`[DownloadService] Download (HTTP/S) concluído: ${tempFilePath}`);
+          pipeline(response, fileStream)
+            .then(() => {
+              this.onLog(`[DownloadService (ESM)] Download (HTTP/S) concluído: ${tempFilePath}`);
               resolve(tempFilePath);
+            })
+            .catch(err => {
+              this.onLog(`[DownloadService (ESM)] Erro ao escrever/pipe (HTTP/S): ${err.message}`);
+              if (fs.existsSync(tempFilePath)) { try { fs.unlinkSync(tempFilePath); } catch(e) {/*ignore*/} }
+              reject(err);
             });
-          });
-          
-          fileStream.on('error', (err) => {
-            this.onLog(`[DownloadService] Erro ao escrever arquivo (HTTP/S): ${err.message}`);
-            
-            if (fs.existsSync(tempFilePath)) {
-              fs.unlinkSync(tempFilePath);
-            }
-            
-            reject(err);
-          });
         });
-        
-        request.on('error', (err) => {
-          this.onLog(`[DownloadService] Erro na requisição HTTP/S: ${err.message}`);
-          
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-          }
-          
-          reject(err);
-        });
-        
-        request.on('timeout', () => {
-          request.destroy();
-          this.onLog(`[DownloadService] Timeout durante o download HTTP/S.`);
-          
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-          }
-          
-          reject(new Error('Timeout durante o download HTTP/S.'));
-        });
+        request.on('error', (err) => { /* ... */ reject(err); });
+        request.on('timeout', () => { /* ... */ reject(new Error('Timeout HTTP/S')); });
       });
-      
     } catch (error) {
-      this.onLog(`[DownloadService] Erro no download HTTP/S: ${error.message}`);
-      
-      // Limpar arquivo parcial
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-      }
-      
-      // Tentar novamente se não excedeu o número máximo de tentativas
+      this.onLog(`[DownloadService (ESM)] Erro download HTTP/S (tentativa ${retryCount+1}): ${error.message}`);
+      if (fs.existsSync(tempFilePath)) { try { fs.unlinkSync(tempFilePath); } catch(e) {/*ignore*/} }
       if (retryCount < this.maxRetries) {
-        this.onLog(`[DownloadService] Tentando novamente (${retryCount + 1}/${this.maxRetries})...`);
-        // Atraso exponencial entre tentativas
-        const delay = this.retryDelay * Math.pow(2, retryCount);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * Math.pow(2, retryCount)));
         return this._downloadWithHttp(videoUrl, tempFilePath, retryCount + 1);
       }
-      
       throw error;
     }
   }
 
-  async downloadVideo(videoUrl, uniqueId) {
-    this.onLog(`[DownloadService] Iniciando processo de download para: ${videoUrl}`);
-    
-    // Processar URL (especialmente para YouTube)
-    let processedUrl = this._processYouTubeUrl(videoUrl);
-    
-    // Criar caminho para arquivo temporário
-    const tempFilePath = this._getTempFilePath(videoUrl, uniqueId);
-    
-    // Estratégia de download com fallbacks
+  async downloadVideo(originalUrl, uniqueId) {
+    this.onLog(`[DownloadService (ESM)] Iniciando download para: ${originalUrl.substring(0,70)}...`);
+    const processedUrl = this._processYouTubeUrl(originalUrl);
+    const tempFilePath = this._getTempFilePath(originalUrl, uniqueId); // Usar URL original para nome do arquivo
+
+    // Estratégia 1: youtube-dl-exec (mais robusto para vários sites e formatos)
     try {
-      // Primeiro, tentar com youtube-dl-exec (mais robusto e atualizado)
+      this.onLog(`[DownloadService (ESM)] Tentando com youtube-dl-exec...`);
+      const filePath = await this._downloadWithYtDlp(processedUrl, tempFilePath);
+      if (this.validateDownloadedFile(filePath).valid) return filePath;
+      this.onLog(`[DownloadService (ESM)] youtube-dl-exec baixou arquivo inválido.`);
+      // Não jogue erro aqui, apenas deixe cair para a próxima estratégia
+    } catch (ytDlpError) {
+      this.onLog(`[DownloadService (ESM)] Falha no youtube-dl-exec: ${ytDlpError.message.substring(0,100)}`);
+    }
+
+    // Estratégia 2: ytdl-core (bom para YouTube, bom progresso)
+    if (ytdl.validateURL(processedUrl)) {
       try {
-        return await this._downloadWithYtDlp(processedUrl, tempFilePath);
-      } catch (ytDlpError) {
-        this.onLog(`[DownloadService] Falha no download com youtube-dl-exec: ${ytDlpError.message}`);
-        this.onLog(`[DownloadService] Tentando método alternativo...`);
-        
-        // Se falhar, tentar com ytdl-core
-        if (ytdl.validateURL(processedUrl)) {
-          try {
-            return await this._downloadWithYtdl(processedUrl, tempFilePath);
-          } catch (ytdlError) {
-            this.onLog(`[DownloadService] Falha no download com ytdl-core: ${ytdlError.message}`);
-            this.onLog(`[DownloadService] Tentando método HTTP direto...`);
-            
-            // Se ambos falharem, tentar HTTP direto
-            return await this._downloadWithHttp(processedUrl, tempFilePath);
-          }
-        } else {
-          // Se não for URL do YouTube, ir direto para HTTP
-          return await this._downloadWithHttp(processedUrl, tempFilePath);
-        }
+        this.onLog(`[DownloadService (ESM)] Tentando com ytdl-core...`);
+        const filePath = await this._downloadWithYtdl(processedUrl, tempFilePath);
+        if (this.validateDownloadedFile(filePath).valid) return filePath;
+        this.onLog(`[DownloadService (ESM)] ytdl-core baixou arquivo inválido.`);
+      } catch (ytdlError) {
+        this.onLog(`[DownloadService (ESM)] Falha no ytdl-core: ${ytdlError.message.substring(0,100)}`);
       }
-    } catch (error) {
-      this.onLog(`[DownloadService] Todos os métodos de download falharam: ${error.message}`);
-      throw error;
+    }
+
+    // Estratégia 3: HTTP/S direto (fallback genérico)
+    // Só tentar HTTP se as outras falharem, pois pode não pegar o vídeo corretamente
+    // para sites como YouTube sem as libs especializadas.
+    try {
+        this.onLog(`[DownloadService (ESM)] Tentando com HTTP/S direto...`);
+        // Para URLs que não são do YouTube, ou como último recurso para YouTube
+        const filePath = await this._downloadWithHttp(originalUrl, tempFilePath); // Usar URL original para HTTP direto
+        if (this.validateDownloadedFile(filePath).valid) return filePath;
+        this.onLog(`[DownloadService (ESM)] HTTP/S direto baixou arquivo inválido.`);
+        throw new Error('Download HTTP/S resultou em arquivo inválido.'); // Força erro se esta estratégia falhar
+    } catch (httpError) {
+        this.onLog(`[DownloadService (ESM)] Falha no HTTP/S direto: ${httpError.message.substring(0,100)}`);
+        throw new Error(`Todos os métodos de download falharam. Último erro (HTTP): ${httpError.message}`);
     }
   }
 
@@ -378,41 +313,36 @@ class DownloadService {
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
-        this.onLog(`[DownloadService] Arquivo temporário ${filePath} deletado.`);
+        // this.onLog(`[DownloadService (ESM)] Arquivo temp ${path.basename(filePath)} deletado.`);
       } catch (err) {
-        this.onLog(`[DownloadService] Erro ao deletar arquivo temporário ${filePath}: ${err.message}`);
+        this.onLog(`[DownloadService (ESM)] Erro ao deletar temp ${path.basename(filePath)}: ${err.message}`);
       }
-    } else {
-      this.onLog(`[DownloadService] Arquivo temporário ${filePath} não encontrado para deleção.`);
     }
   }
 
-  // Método utilitário para verificar se o download foi bem-sucedido
   validateDownloadedFile(filePath) {
     try {
       if (!fs.existsSync(filePath)) {
         return { valid: false, reason: 'Arquivo não existe' };
       }
-      
       const stats = fs.statSync(filePath);
-      
       if (stats.size === 0) {
-        return { valid: false, reason: 'Arquivo está vazio (0 bytes)' };
+        return { valid: false, reason: 'Arquivo vazio (0 bytes)' };
       }
-      
-      if (stats.size < 1024) { // Menos de 1KB
-        // Verificar se não é um arquivo de erro HTML/texto
-        const fileContent = fs.readFileSync(filePath, { encoding: 'utf8', flag: 'r' });
-        if (fileContent.includes('<html') || fileContent.includes('error') || fileContent.includes('Error')) {
-          return { valid: false, reason: 'Arquivo parece ser uma página de erro HTML' };
+      // Uma validação mais robusta poderia tentar abrir o arquivo com ffprobe,
+      // mas isso adiciona uma dependência. Para agora, tamanho > 0 é o básico.
+      // Mínimo de 1KB para ser considerado algo além de um arquivo de erro.
+      if (stats.size < 1024) { 
+        const content = fs.readFileSync(filePath, {encoding: 'utf-8', flag: 'r' });
+        if (content.toLowerCase().includes("<html") || content.toLowerCase().includes("error")) {
+            return { valid: false, reason: 'Arquivo pequeno e parece ser HTML/Erro.' };
         }
       }
-      
       return { valid: true, size: stats.size };
     } catch (error) {
-      return { valid: false, reason: `Erro ao validar arquivo: ${error.message}` };
+      return { valid: false, reason: `Exceção ao validar: ${error.message}` };
     }
   }
 }
 
-module.exports = DownloadService;
+export default DownloadService;

@@ -1,29 +1,31 @@
 // src/preload.js
-const { contextBridge, ipcRenderer } = require('electron');
+// Este script agora é um ES Module devido ao "type": "module" no package.json.
+
+import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Renderer para Main
   requestVideoProcessing: (data) => ipcRenderer.send('request-video-processing', data),
-  notifyLoginSuccess: () => ipcRenderer.send('login-successful'),       // Usado por loginRenderer.js
-  requestLogoutNavigation: () => ipcRenderer.send('logout-request'),   // Usado por renderer.js (dashboard)
-  getAppVersion: () => ipcRenderer.invoke('get-app-version'),          // Usado por ambos os renderers
-  
-  // NOVA FUNÇÃO ADICIONADA AQUI:
-  getFirebaseConfig: () => ipcRenderer.invoke('get-firebase-config'), // Para buscar a config do Firebase
+  notifyLoginSuccess: () => ipcRenderer.send('login-successful'),
+  requestLogoutNavigation: () => ipcRenderer.send('logout-request'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  getFirebaseConfig: () => ipcRenderer.invoke('get-firebase-config'),
 
   // Main para Renderer (para receber atualizações do processo de vídeo)
   onVideoProcessingResult: (callback) => {
     const subscription = (event, result) => callback(result);
     ipcRenderer.on('video-processing-result', subscription);
-    return () => ipcRenderer.removeListener('video-processing-result', subscription); // Função de cleanup
+    // Retorna uma função para remover o listener (cleanup)
+    return () => ipcRenderer.removeListener('video-processing-result', subscription);
   },
 
   // Main para Renderer (para status gerais/progresso)
   onMonitoringStatusUpdate: (callback) => {
     const subscription = (event, status) => callback(status);
     ipcRenderer.on('monitoring-status-update', subscription);
-    return () => ipcRenderer.removeListener('monitoring-status-update', subscription); // Função de cleanup
+    // Retorna uma função para remover o listener (cleanup)
+    return () => ipcRenderer.removeListener('monitoring-status-update', subscription);
   }
 });
 
-console.log('Preload script carregado e electronAPI (v2.1 - com getFirebaseConfig) exposta!'); // Atualize o log se quiser
+console.log('Preload script (ESM) carregado e electronAPI (v2.1 - com getFirebaseConfig) exposta!');
