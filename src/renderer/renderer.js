@@ -242,10 +242,10 @@ async function setupFirestoreMonitoring(uid) {
     if (monitoringStatusDisplay) monitoringStatusDisplay.textContent = `Monitorando projetos para ${nomeEmpresaAtiva}.`;
 
     const projetosShortsRef = fbDb.collection('empresas').doc(empresaAtivaId).collection('projetos_shorts');
-    const q = projetosShortsRef.where("status", "==", "download");
+    const q = projetosShortsRef.where("status", "==", "downloading");
 
     unsubscribeFirestoreListener = q.onSnapshot((querySnapshot) => {
-        console.log(`RENDERER_FIRESTORE_SNAPSHOT: ${querySnapshot.docs.length} projetos com status 'download'.`);
+        console.log(`RENDERER_FIRESTORE_SNAPSHOT: ${querySnapshot.docs.length} projetos com status 'downloading'.`);
         let newItemsAddedToQueue = false;
         querySnapshot.forEach((docSnapshot) => {
             const projetoData = docSnapshot.data();
