@@ -32,7 +32,7 @@ jobs:
     - name: publish
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+      run: npm run publish:linux
 
   build_on_mac:
     runs-on: macos-latest
@@ -67,7 +67,7 @@ jobs:
     - name: publish
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+      run: npm run publish:mac
 
   build_on_win:
     runs-on: windows-latest
@@ -98,4 +98,4 @@ jobs:
     - name: publish
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+      run: npm run publish:win

@@ -19,7 +19,9 @@
     "build:linux": "npm run build:css && electron-builder --linux",
     "build:mac": "npm run build:css && electron-builder --mac",
     "build:win": "npm run build:css && electron-builder --windows",
-    "publish": "electron-builder --mac --windows --linux -p always",
+    "publish:linux": "electron-builder --linux -p always",
+    "publish:mac": "electron-builder --mac -p always",
+    "publish:win": "electron-builder --windows -p always",
     "release": "electron-builder --mac --windows --linux --publish always"
   },
   "keywords": [
