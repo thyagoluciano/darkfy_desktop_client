@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notifyLoginSuccess: () => ipcRenderer.send('login-successful'),       // Usado por loginRenderer.js
   requestLogoutNavigation: () => ipcRenderer.send('logout-request'),   // Usado por renderer.js (dashboard)
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),          // Usado por ambos os renderers
+  
+  // NOVA FUNÇÃO ADICIONADA AQUI:
+  getFirebaseConfig: () => ipcRenderer.invoke('get-firebase-config'), // Para buscar a config do Firebase
 
   // Main para Renderer (para receber atualizações do processo de vídeo)
   onVideoProcessingResult: (callback) => {
@@ -23,4 +26,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }
 });
 
-console.log('Preload script carregado e electronAPI (v2) exposta!');
+console.log('Preload script carregado e electronAPI (v2.1 - com getFirebaseConfig) exposta!'); // Atualize o log se quiser
