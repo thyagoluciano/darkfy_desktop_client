@@ -4,6 +4,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
+console.log('[generate-config] Variáveis de ambiente disponíveis:');
+const envVars = [
+  'FIREBASE_API_KEY', 'FIREBASE_AUTH_DOMAIN', 'FIREBASE_PROJECT_ID', 
+  'FIREBASE_STORAGE_BUCKET', 'FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_APP_ID',
+  'MINIO_ENDPOINT', 'MINIO_ACCESS_KEY', 'MINIO_SECRET_KEY', 
+  'MINIO_BUCKET_NAME', 'MINIO_USE_SSL'
+];
+
+envVars.forEach(key => {
+  console.log(`[generate-config] ${key}: ${process.env[key] ? 'DEFINIDA' : 'NÃO DEFINIDA'}`);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename); // __dirname aqui é a raiz do projeto
 
