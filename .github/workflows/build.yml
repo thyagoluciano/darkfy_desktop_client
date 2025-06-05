@@ -28,6 +28,10 @@ jobs:
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
       run: npm run build:linux
+    - name: publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npm run publish
 
   build_on_mac:
     runs-on: macos-latest
@@ -44,6 +48,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
     - name: install mac-specific build tools
       run: npm install dmg-license
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
     - name: build
       env:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
@@ -58,6 +64,10 @@ jobs:
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
       run: npm run build:mac
+    - name: publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npm run publish
 
   build_on_win:
     runs-on: windows-latest
@@ -86,5 +96,5 @@ jobs:
       run: npm run build:win
     - name: publish
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: npm run publish

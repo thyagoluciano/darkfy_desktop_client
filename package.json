@@ -2,7 +2,7 @@
   "name": "darkfy-client",
   "version": "1.0.0",
   "description": "Aplicação Electron para Darkfy",
-  "author": "Thyago Luciano",
+  "author": "Thyago Luciano <thyagoluciano@gmail.com>",
   "license": "ISC",
   "main": "src/main.js",
   "scripts": {
