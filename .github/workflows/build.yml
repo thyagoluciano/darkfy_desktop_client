@@ -28,10 +28,10 @@ jobs:
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
       run: npm run build:linux
-    - name: publish
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+    # - name: publish
+    #   env:
+    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   run: npm run publish
 
   build_on_mac:
     runs-on: macos-latest
@@ -40,9 +40,7 @@ jobs:
     - uses: actions/setup-node@v4 # Atualizado
       with:
         node-version: 22
-    # - name: intall dependencies # Removido - erro de digitação e redundante
-    #   run: npm install dmg-license
-    - name: install dependencies # Corrigido e unificado
+    - name: install dependencies
       run: npm install
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Adicionado
@@ -64,10 +62,10 @@ jobs:
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
       run: npm run build:mac
-    - name: publish
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+    # - name: publish
+    #   env:
+    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   run: npm run publish
 
   build_on_win:
     runs-on: windows-latest
@@ -94,7 +92,7 @@ jobs:
           MINIO_BUCKET_NAME: ${{ secrets.MINIO_BUCKET_NAME }}
           MINIO_USE_SSL: ${{ secrets.MINIO_USE_SSL }}
       run: npm run build:win
-    - name: publish
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: npm run publish
+    # - name: publish
+    #   env:
+    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   run: npm run publish
