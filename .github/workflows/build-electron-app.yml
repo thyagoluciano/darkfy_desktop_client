@@ -28,10 +28,14 @@ jobs:
         with:
           node-version: 22.16 # Recomendado usar uma versão LTS
           cache: 'npm'
-
-
+      
       - name: Install dependencies
-        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "//github.com/:_authToken=${GITHUB_TOKEN}" > ~/.npmrc
+          npm ci
+      
         
       # Instalar dependências específicas para Linux
       - name: Install Linux dependencies
@@ -142,4 +146,4 @@ jobs:
             
             Consulte o [CHANGELOG.md](CHANGELOG.md) para detalhes das mudanças (se você tiver um).
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }} # Token fornecido pelo GitHub Actions
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token fornecido pelo GitHub Actions
